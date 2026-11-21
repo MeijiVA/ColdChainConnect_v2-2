@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { useEffect, useMemo, useState } from "react";
 import JsBarcode from "jsbarcode";
+import { orderBarcodeValue, palletBarcodeValue } from "@/lib/palletCode";
 import { Printer } from "lucide-react";
 import type { Booking, InventoryBatch, Pallet } from "@shared/api";
 
@@ -21,9 +22,14 @@ interface PickLine {
   qty: number;
 }
 
+/**
+ * Barcodes carry a short code (e.g. PLT-7F7CE403), not the 36-character ID. A long Code 128 gets shrunk
+ * until its bars are under one pixel wide and nothing can read it; 12 characters stay scannable at label size.
+ * The scanner resolves the short code back to the full pallet or order.
+ */
 function barcodeDataUrl(value: string) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  JsBarcode(svg, value, { format: "CODE128", displayValue: false, margin: 20, height: 64, width: 2 });
+  JsBarcode(svg, value, { format: "CODE128", displayValue: false, margin: 12, height: 64, width: 3 });
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(svg))}`;
 }
 
@@ -83,7 +89,7 @@ function PalletLabel({
       <p className="text-xs">{storeName}</p>
       <p className="text-2xs">Delivery: {deliveryDate}</p>
       {barcode && <img src={barcode} alt={`Barcode for pallet ${index + 1}`} className="h-auto w-full object-contain" />}
-      <p className="font-mono text-2xs">{pallet.id}</p>
+      <p className="font-mono text-2xs">{palletBarcodeValue(pallet.id)}</p>
     </div>
   );
 }
@@ -91,7 +97,7 @@ function PalletLabel({
 function SheetSection({ section, batches }: { section: DeliverySheetSection; batches: InventoryBatch[] }) {
   const { order, pallets } = section;
   const pickLines = usePickLines(section, batches);
-  const orderBarcode = useMemo(() => barcodeDataUrl(order.id), [order.id]);
+  const orderBarcode = useMemo(() => barcodeDataUrl(orderBarcodeValue(order.id)), [order.id]);
   const { storeName, deliveryDate } = orderLabels(order);
 
   return (
@@ -101,7 +107,7 @@ function SheetSection({ section, batches }: { section: DeliverySheetSection; bat
         <p className="text-xs">Order {order.id.slice(0, 8)} · {storeName}{order.customer?.location ? ` · ${order.customer.location}` : ""}</p>
         <p className="text-xs">Delivery date: {deliveryDate} · Pallets: {pallets.length}</p>
         <img src={orderBarcode} alt={`Barcode for order ${order.id.slice(0, 8)}`} className="mt-2 h-auto w-full object-contain" />
-        <p className="font-mono text-2xs">{order.id}</p>
+        <p className="font-mono text-2xs">{orderBarcodeValue(order.id)}</p>
       </header>
 
       <section className="pick-list mt-3">
@@ -159,7 +165,7 @@ export function DeliverySheet({ sections, batches }: DeliverySheetProps) {
   );
 
   useEffect(() => {
-    setBarcodes(Object.fromEntries(allPallets.map((pallet) => [pallet.id, barcodeDataUrl(pallet.id)])));
+    setBarcodes(Object.fromEntries(allPallets.map((pallet) => [pallet.id, barcodeDataUrl(palletBarcodeValue(pallet.id))])));
   }, [allPallets]);
 
   return (

@@ -1,7 +1,7 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Button } from "@/components/ui/button";
 import { confirmAction } from "@/lib/confirm";
-import { palletCode } from "@/lib/palletCode";
+import { palletBarcodeValue } from "@/lib/palletCode";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
@@ -388,8 +388,8 @@ export function AgentPalletTracking() {
           <div className="rounded-xl bg-muted p-3 text-sm">
             <p className="font-semibold text-foreground">
               {upcomingStatus
-                ? `Move ${palletCode(scanPallet.id)} from ${statusLabels[scanPallet.status]} → ${statusLabels[upcomingStatus]}?`
-                : `${palletCode(scanPallet.id)} has already been shipped.`}
+                ? `Move ${palletBarcodeValue(scanPallet.id)} from ${statusLabels[scanPallet.status]} → ${statusLabels[upcomingStatus]}?`
+                : `${palletBarcodeValue(scanPallet.id)} has already been shipped.`}
             </p>
             <div className="mt-2 flex items-center justify-between">
               <span className="text-muted-foreground">Current status</span>

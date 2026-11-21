@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { randomUUID } from "crypto";
 import { desc, eq } from "drizzle-orm";
 import { db } from "../db";
-import { trucks } from "../db/schema";
+import { deliveries, trucks } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
 import { CreateTruckSchema, UpdateTruckSchema } from "../../shared/api";
 import { logAction } from "../middleware/audit-logger";
@@ -18,7 +18,17 @@ export const listTrucks: RequestHandler = async (_req, res) => {
     const allTrucks = await db.query.trucks.findMany({
       orderBy: [desc(trucks.created_at)],
     });
-    res.json(allTrucks);
+    const inTransitRows = await db
+      .selectDistinct({ truck_id: deliveries.truck_id })
+      .from(deliveries)
+      .where(eq(deliveries.status, "in_transit"));
+    const inTransitTruckIds = new Set(inTransitRows.map((row) => row.truck_id));
+    res.json(
+      allTrucks.map((truck) => ({
+        ...truck,
+        status: truck.status === "maintenance" ? "maintenance" : inTransitTruckIds.has(truck.id) ? "in_transit" : "available",
+      })),
+    );
   } catch (error) {
     console.error("Error fetching trucks:", error);
     res.status(500).json({ error: "Internal server error" });

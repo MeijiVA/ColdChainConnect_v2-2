@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { RequestHandler } from "express";
 import { db } from "../db";
 import { accounts_receivable, agents, deliveries, trucks } from "../db/schema";
@@ -74,6 +74,12 @@ export const getAgentSchedule: RequestHandler = async (req: AuthRequest, res) =>
       },
     });
 
+    const saleAgentUserIds = [...new Set(assignedDeliveries.flatMap((d) => d.delivery_items.flatMap((s) => s.invoice?.agent?.id ?? [])))];
+    const saleAgentProfiles = saleAgentUserIds.length
+      ? await db.query.agents.findMany({ where: inArray(agents.user_id, saleAgentUserIds), columns: { user_id: true, full_name: true } })
+      : [];
+    const fullNameByUserId = new Map(saleAgentProfiles.map((p) => [p.user_id, p.full_name?.trim() || null]));
+
     const schedule = assignedDeliveries
       .filter((delivery) => delivery.delivery_items.length > 0)
       .map((delivery) => ({
@@ -91,7 +97,9 @@ export const getAgentSchedule: RequestHandler = async (req: AuthRequest, res) =>
                 credit_applied_amount: stop.invoice.credit_applied_amount,
               }
             : null,
-          sale_agent: stop.invoice?.agent ?? null,
+          sale_agent: stop.invoice?.agent
+            ? { ...stop.invoice.agent, full_name: fullNameByUserId.get(stop.invoice.agent.id) ?? null }
+            : null,
           pallets: stop.invoice?.booking?.order_pallets ?? [],
           accounts_receivable: undefined,
         })),

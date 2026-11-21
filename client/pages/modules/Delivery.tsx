@@ -182,8 +182,9 @@ export function DeliveryDispatch() {
   const truckDeliveries = selectedTruck
     ? deliveries.filter((d) => d.truck_id === selectedTruck.id)
     : [];
-  const openTruckRuns = truckDeliveries.filter((delivery) => delivery.status !== "completed");
-  const truckAgentNames = [...new Set(openTruckRuns.flatMap((delivery) => delivery.agent ? [agentLabel(delivery.agent)] : []))];
+  const truckAgent = selectedTruck?.agent_id
+    ? agents.find((agent) => agent.id === selectedTruck.agent_id) ?? null
+    : null;
   const scheduleQuery = scheduleSearch.trim().toLowerCase();
   const filteredTruckDeliveries = truckDeliveries.filter((delivery) => {
     const driverId = delivery.driver_id ?? delivery.driver?.id ?? delivery.truck?.driver_id ?? "";
@@ -285,25 +286,14 @@ export function DeliveryDispatch() {
   };
 
   const handleChangeTruckAgent = async (agentId: string) => {
-    if (!token) return;
-    const runsToChange = openTruckRuns.filter((run) => (run.agent_id ?? "") !== agentId);
-    const hasIncompleteStops = runsToChange.some((run) => run.delivery_items.some((item) => item.status !== "completed"));
-    if (hasIncompleteStops && !(await confirmAction("Some runs on this truck still have incomplete stops. Force changing their assigned agent?"))) return;
+    if (!token || !selectedTruck) return;
     try {
-      const truckRes = await fetch(`/api/trucks/${selectedTruck!.id}`, {
+      const res = await fetch(`/api/trucks/${selectedTruck.id}`, {
         method: "PATCH",
         headers: authHeaders(token),
         body: JSON.stringify({ agent_id: agentId || null }),
       });
-      if (!truckRes.ok) throw new Error(await truckRes.text());
-      for (const run of runsToChange) {
-        const res = await fetch(`/api/deliveries/${run.id}/assign`, {
-          method: "PATCH",
-          headers: authHeaders(token),
-          body: JSON.stringify({ agent_id: agentId || null, force: hasIncompleteStops }),
-        });
-        if (!res.ok) throw new Error(await res.text());
-      }
+      if (!res.ok) throw new Error(await res.text());
       setShowChangeTruckAgentModal(false);
     } catch (err) {
       toast.error("Failed to update agent: " + (err instanceof Error ? err.message : String(err)));
@@ -440,11 +430,10 @@ export function DeliveryDispatch() {
               </Button>
             )}
           </div>
-          {openTruckRuns.length === 0 ? (
-            <div className="bg-muted rounded-lg p-3 text-center text-xs text-muted-foreground">No open runs</div>
-          ) : truckAgentNames.length > 0 ? (
+          {truckAgent ? (
             <div className="bg-muted rounded-lg p-3">
-              <p className="font-semibold text-foreground text-sm">{truckAgentNames.join(", ")}</p>
+              <p className="font-semibold text-foreground text-sm">{agentLabel(truckAgent)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Takes POS orders for {selectedTruck!.district}</p>
             </div>
           ) : (
             <div className="bg-muted rounded-lg p-3 text-center text-xs text-muted-foreground">No agent assigned</div>
@@ -875,7 +864,7 @@ export function DeliveryDispatch() {
           <ChangeTruckAgentModal
             truck={selectedTruck}
             agents={agents}
-            currentAgentId={selectedTruck.agent_id ?? openTruckRuns[0]?.agent_id ?? ""}
+            currentAgentId={selectedTruck.agent_id ?? ""}
             onClose={() => setShowChangeTruckAgentModal(false)}
             onSave={handleChangeTruckAgent}
           />
@@ -991,7 +980,13 @@ function ChangeTruckAgentModal({ truck, agents, currentAgentId, onClose, onSave 
   return (
     <ModalShell title={`Assign Agent — ${truck.license_plate}`} onClose={onClose}>
       <div>
-        <label htmlFor="truck-select-agent" className="block text-xs font-semibold text-foreground mb-2">Select Agent</label>
+        <div className="rounded-lg bg-muted px-3 py-2.5">
+          <p className="text-xs font-semibold text-muted-foreground">Current agent</p>
+          <p className="mt-1 text-sm font-semibold text-foreground">
+            {(() => { const a = agents.find((x) => x.id === currentAgentId); return a ? agentLabel(a) : "No agent assigned"; })()}
+          </p>
+        </div>
+        <label htmlFor="truck-select-agent" className="mt-3 block text-xs font-semibold text-foreground mb-2">Select Agent</label>
         <NativeSelect id="truck-select-agent"
           value={selectedAgentId}
           onChange={(e) => setSelectedAgentId(e.target.value)}
@@ -1002,7 +997,10 @@ function ChangeTruckAgentModal({ truck, agents, currentAgentId, onClose, onSave 
             <option key={agent.id} value={agent.id}>{agentLabel(agent)}</option>
           ))}
         </NativeSelect>
-        <p className="mt-3 text-xs text-muted-foreground">The agent can order for this truck's district while assigned. Unassigned frees the agent and also clears them from open runs.</p>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Only changes who can place POS orders for {truck.district}, and who new orders from this district are credited to.
+          Existing runs and schedules are not changed.
+        </p>
       </div>
       <div className="flex justify-end gap-2 pt-4 border-t border-border">
         <Button onClick={onClose} variant="outline">
@@ -1102,7 +1100,7 @@ function EditTruckModal({ truck, token, onClose, onSaved }: {
 }) {
   const [licensePlate, setLicensePlate]   = useState(truck.license_plate);
   const [truckDistrict, setTruckDistrict] = useState(truck.district);
-  const [truckStatus, setTruckStatus]     = useState(truck.status);
+  const [inMaintenance, setInMaintenance] = useState(truck.status === "maintenance");
   const [saving, setSaving]               = useState(false);
 
   const handleSave = async () => {
@@ -1112,7 +1110,7 @@ function EditTruckModal({ truck, token, onClose, onSaved }: {
       const res = await fetch(`/api/trucks/${truck.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ license_plate: licensePlate, district: truckDistrict, status: truckStatus }),
+        body: JSON.stringify({ license_plate: licensePlate, district: truckDistrict, status: inMaintenance ? "maintenance" : "available" }),
       });
       if (!res.ok) throw new Error(await res.text());
       await onSaved();
@@ -1136,15 +1134,11 @@ function EditTruckModal({ truck, token, onClose, onSaved }: {
               className="w-full" />
           </div>
         ))}
-        <div>
-          <label htmlFor="delivery-status-2" className="block text-xs font-semibold text-foreground mb-1">Status</label>
-          <NativeSelect id="delivery-status-2" value={truckStatus} onChange={(e) => setTruckStatus(e.target.value as Truck["status"])}
-            className="w-full">
-            <option value="available">Available</option>
-            <option value="in_transit">In Transit</option>
-            <option value="maintenance">Maintenance</option>
-          </NativeSelect>
-        </div>
+        <label className="flex items-center gap-2 text-sm text-foreground">
+          <input type="checkbox" checked={inMaintenance} onChange={(e) => setInMaintenance(e.target.checked)} />
+          Under maintenance
+        </label>
+        <p className="text-xs text-muted-foreground">Status is otherwise automatic: In Transit while a delivery run is in transit, otherwise Available.</p>
       </div>
       <div className="flex justify-end gap-2 pt-4 border-t border-border">
         <Button onClick={onClose} variant="outline">Cancel</Button>

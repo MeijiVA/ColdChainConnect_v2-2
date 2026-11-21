@@ -52,47 +52,39 @@ export function AgentStopRow({ index, stop, isConfirming, onOpenDetails, onConfi
             <span className="inline-flex items-center gap-1"><PackageCheck size={14} /> Invoice {invoiceLabel}</span>
             <span>Pallets · {stop.pallets.length}</span>
             {totals.units > 0 && <span>{totals.products} product{totals.products === 1 ? "" : "s"} · {totals.units} units</span>}
-            <span className="inline-flex items-center gap-0.5 font-semibold text-accent-2">
-              View details <ChevronRight size={14} />
-            </span>
           </div>
         </div>
       </button>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 pl-11">
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <Button type="button" variant="outline" onClick={onOpenDetails} className={`h-12 text-base ${stop.invoice ? "" : "col-span-2"}`}>
+          View details <ChevronRight size={16} />
+        </Button>
         {stop.invoice && (
-          <Link
-            to={`/booking-dispatch/preparation?order=${stop.invoice.booking_id}`}
-            className="text-xs font-semibold text-primary hover:underline"
-          >
-            Track pallets
-          </Link>
+          <Button asChild variant="outline" className="h-12 text-base">
+            <Link to={`/booking-dispatch/preparation?order=${stop.invoice.booking_id}`}>
+              <PackageCheck size={16} /> Track pallets
+            </Link>
+          </Button>
         )}
+      </div>
+
+      <div className="mt-3">
         {stop.status === "completed" && stop.is_paid ? (
-          <p className="text-xs font-semibold text-green">Paid</p>
+          <p className="text-sm font-semibold text-green">Paid</p>
         ) : stop.status === "completed" ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-semibold text-warning">
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-warning">
               {stop.outstanding_amount != null && stop.invoice && stop.outstanding_amount < Number(stop.invoice.total_amount ?? 0)
                 ? `Partially paid · ₱${stop.outstanding_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} remaining`
                 : "Not paid · recorded in Accounts Receivable"}
             </p>
-            <Button
-              type="button"
-              onClick={onRecordPayment}
-              disabled={isConfirming}
-              variant="success" className="min-h-10"
-            >
+            <Button type="button" onClick={onRecordPayment} disabled={isConfirming} variant="success" className="h-12 w-full text-base">
               Record payment
             </Button>
           </div>
         ) : allShipped ? (
-          <Button
-            type="button"
-            onClick={onConfirmPayment}
-            disabled={isConfirming}
-            variant="success" className="min-h-10"
-          >
+          <Button type="button" onClick={onConfirmPayment} disabled={isConfirming} variant="success" className="h-12 w-full text-base">
             Confirm delivery & payment
           </Button>
         ) : (

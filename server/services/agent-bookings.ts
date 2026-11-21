@@ -1,26 +1,30 @@
-import { and, eq, inArray, isNull, or, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or, type SQL } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "../db";
 import { agents, bookings, deliveries, delivery_items, drivers, invoices, trucks } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
 
-/** Districts of the trucks an agent is assigned to, plus those of deliveries they manage. */
+/** Districts of the trucks an agent is assigned to (Truck Dispatch > Change Agent controls this). */
 export async function getAgentDistricts(userId: string): Promise<string[]> {
   const agent = await db.query.agents.findFirst({
     where: eq(agents.user_id, userId),
     columns: { id: true },
   });
   if (!agent) return [];
+  const rows = await db.selectDistinct({ district: trucks.district }).from(trucks).where(eq(trucks.agent_id, agent.id));
+  return rows.map((row) => row.district);
+}
 
-  const [assignedTrucks, deliveryTrucks] = await Promise.all([
-    db.selectDistinct({ district: trucks.district }).from(trucks).where(eq(trucks.agent_id, agent.id)),
-    db
-      .selectDistinct({ district: trucks.district })
-      .from(deliveries)
-      .innerJoin(trucks, eq(deliveries.truck_id, trucks.id))
-      .where(eq(deliveries.agent_id, agent.id)),
-  ]);
-  return [...new Set([...assignedTrucks, ...deliveryTrucks].map((row) => row.district))];
+/** User id of the agent on the truck serving a district (prefers an available truck), or null. */
+export async function getDistrictAgentUserId(district: string | null | undefined): Promise<string | null> {
+  if (!district) return null;
+  const rows = await db
+    .select({ user_id: agents.user_id, status: trucks.status })
+    .from(trucks)
+    .innerJoin(agents, eq(trucks.agent_id, agents.id))
+    .where(and(eq(trucks.district, district), eq(agents.is_archived, false)))
+    .orderBy(asc(trucks.created_at));
+  return (rows.find((row) => row.status === "available") ?? rows[0])?.user_id ?? null;
 }
 
 /** Invoices for the orders an agent created or is delivering. */

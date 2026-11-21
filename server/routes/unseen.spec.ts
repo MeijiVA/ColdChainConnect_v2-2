@@ -3,7 +3,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { Request, Response } from "express";
 import { db } from "../db";
-import { bookings, customers, deliveries, delivery_items, expenses, invoices, products, receipt_payment_entries, receipts, trucks } from "../db/schema";
+import { agents, bookings, customers, deliveries, delivery_items, expenses, invoices, products, receipt_payment_entries, receipts, trucks } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
 import { seedUsers } from "../test/test-db";
 import { getUnseenCounts } from "./unseen";
@@ -23,7 +23,13 @@ beforeAll(async () => {
   await db.insert(trucks).values({ id: "truck-1", license_plate: "AAA-111", district: "d" });
   await db.insert(customers).values({ id: "cust-1", store_name: "Store One", location: "Somewhere" });
   await db.insert(products).values({ id: "prod-low", name: "Low stock", price: "10.00", reorder_point: 10 });
-  await db.insert(deliveries).values({ id: "del-1", truck_id: "truck-1" });
+  await db.insert(agents).values({ id: "agent-1", user_id: seeded.agent.id, full_name: "Agent One" });
+  await db.insert(deliveries).values([
+    { id: "del-1", truck_id: "truck-1" },
+    { id: "del-transit", truck_id: "truck-1", status: "in_transit" },
+    { id: "del-done", truck_id: "truck-1", status: "completed" },
+    { id: "del-agent", truck_id: "truck-1", agent_id: "agent-1" },
+  ]);
   const stops = ["recorded", "nothing-paid", "verified", "old"];
   await db.insert(bookings).values([
     ...stops.map((id) => ({ id: `book-${id}`, customer_id: "cust-1", created_by: seeded.admin.id })),
@@ -65,7 +71,7 @@ beforeAll(async () => {
   ]);
 });
 
-async function counts(role: "admin" | "staff", modulePermissions: string[] | undefined, keys: string[], userId = "u") {
+async function counts(role: "admin" | "staff" | "agent", modulePermissions: string[] | undefined, keys: string[], userId = "u") {
   let body: Record<string, number> = {};
   const query = Object.fromEntries(keys.map((key) => [key, SINCE]));
   const req = { user: { userId, username: userId, role }, modulePermissions, query } as unknown as AuthRequest;
@@ -106,6 +112,14 @@ describe("GET /api/unseen accounting tabs", () => {
     expect((await counts("admin", undefined, [])).pendingOrders).toBe(4);
     expect((await counts("staff", ["order-fulfillment"], [])).pendingOrders).toBe(4);
     expect((await counts("staff", ["accounting"], [])).pendingOrders).toBe(0);
+  });
+
+  it("counts only open runs for the dispatch badge", async () => {
+    expect((await counts("admin", undefined, ["dispatch"])).dispatch).toBe(3);
+  });
+
+  it("counts only the agent's own open runs for the dispatch badge", async () => {
+    expect((await counts("agent", ["delivery-operations"], ["dispatch"], seeded.agent.id)).dispatch).toBe(1);
   });
 
   it("reports zero for staff without the accounting module", async () => {

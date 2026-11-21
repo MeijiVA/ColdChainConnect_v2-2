@@ -8,7 +8,7 @@ import { logAction } from "../middleware/audit-logger";
 import { CreditBlockResponse } from "../../shared/api";
 import { evaluateCreditRules } from "../services/credit-rules";
 import { estimateOrderTotal, loadCustomerCredit } from "../services/customer-credit";
-import { getAgentDistricts, getAgentOrderIds } from "../services/agent-bookings";
+import { getAgentDistricts, getAgentOrderIds, getDistrictAgentUserId } from "../services/agent-bookings";
 import { getAvailableUnitsByProduct, releaseBookingReservationsTx, reserveBookingItemsTx } from "../services/inventory-reservations";
 
 class StockReservationConflict extends Error {
@@ -98,7 +98,7 @@ export const listAgentDistricts: RequestHandler = async (req: AuthRequest, res) 
 };
 
 export const createBooking: RequestHandler = async (req: AuthRequest, res) => {
-  const { customer_id, prepared_delivery_date, items, ar_override, ar_override_reason, agent_id } = req.body;
+  const { customer_id, prepared_delivery_date, items, ar_override, ar_override_reason } = req.body;
 
   if (!customer_id || !items || !Array.isArray(items)) {
     return res.status(400).json({ error: "Customer ID and items array are required" });
@@ -129,30 +129,21 @@ export const createBooking: RequestHandler = async (req: AuthRequest, res) => {
       return res.status(401).json({ error: "User account not found. Please log in again." });
     }
 
-    let orderCreatorId = req.user.userId;
-    if (agent_id) {
-      if (req.user.role !== "admin") {
-        return res.status(403).json({ error: "Only admins can assign an agent to an order" });
-      }
-      const selectedAgent = await db.query.agents.findFirst({
-        where: eq(agents.id, agent_id),
-        columns: { user_id: true, is_archived: true },
-      });
-      if (!selectedAgent || selectedAgent.is_archived) {
-        return res.status(400).json({ error: "Selected agent was not found" });
-      }
-      orderCreatorId = selectedAgent.user_id;
-    }
+    const customer = await db.query.customers.findFirst({
+      where: eq(customers.id, customer_id),
+      columns: { district: true },
+    });
 
+    // Agents order as themselves, only for districts of trucks they're assigned to.
+    // Everyone else (admin/staff) credits the order to the agent on the truck serving the customer's district.
+    let orderCreatorId = req.user.userId;
     if (req.user.role === "agent") {
-      const customer = await db.query.customers.findFirst({
-        where: eq(customers.id, customer_id),
-        columns: { district: true },
-      });
       const districts = await getAgentDistricts(req.user.userId);
       if (!customer?.district || !districts.includes(customer.district)) {
         return res.status(403).json({ error: "You can only create orders for customers in your assigned districts" });
       }
+    } else {
+      orderCreatorId = (await getDistrictAgentUserId(customer?.district)) ?? req.user.userId;
     }
 
     if (items.some((item: { product_id?: string; qty_ordered?: unknown }) =>

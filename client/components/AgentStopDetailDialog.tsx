@@ -31,6 +31,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 
 export function AgentStopDetailDialog({ stop, onBack, onShowOnMap }: AgentStopDetailDialogProps) {
   const customer = stop.destination_customer;
+  const saleAgent = stop.sale_agent as (NonNullable<typeof stop.sale_agent> & { full_name?: string | null }) | null;
   const totals = palletTotals(stop.pallets);
   const invoiceLabel = stop.invoice?.receipt_number ?? stop.invoice_id.slice(0, 8);
 
@@ -65,7 +66,7 @@ export function AgentStopDetailDialog({ stop, onBack, onShowOnMap }: AgentStopDe
         <DetailRow label="Sale by">
           <span className="inline-flex items-center gap-1">
             <UserRound size={14} />
-            {stop.sale_agent?.username ?? "Unknown"}
+            {saleAgent?.full_name || saleAgent?.username || "Unknown"}
           </span>
         </DetailRow>
       </DetailSection>

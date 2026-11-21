@@ -358,8 +358,8 @@ export function AgentPalletTracking() {
   if (scanPallet) {
     const upcomingStatus = nextStatus[scanPallet.status];
     return (
-      <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-4 px-0 pb-24 pt-5 sm:px-4">
-        <header className="flex items-start justify-between gap-3 px-4 sm:px-0">
+      <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-4 px-4 pb-24 pt-5">
+        <header className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold text-muted-foreground">
               Scanned pallet
@@ -383,7 +383,7 @@ export function AgentPalletTracking() {
           </Button>
         </header>
 
-        <div className="mx-4 rounded-2xl border border-border bg-card p-5 shadow-sm sm:mx-0">
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
           <div className="rounded-xl bg-muted p-3 text-sm">
             <p className="font-semibold text-foreground">
               {upcomingStatus
@@ -423,7 +423,7 @@ export function AgentPalletTracking() {
               onClick={() => setScanPalletId(null)}
               disabled={updatingPalletId !== null}
               variant="outline"
-              className="min-h-11"
+              className="h-12 text-base"
             >
               {nextActionLabels[scanPallet.status] ? "Cancel" : "Close"}
             </Button>
@@ -438,7 +438,7 @@ export function AgentPalletTracking() {
                     !scheduledOrderIds.has(scanPallet.order_id))
                 }
                 variant="default"
-                className="min-h-11"
+                className="h-12 text-base"
               >
                 {updatingPalletId === scanPallet.id
                   ? "Updating…"
@@ -452,8 +452,8 @@ export function AgentPalletTracking() {
   }
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-4 px-0 pb-24 pt-5 sm:px-4">
-      <header className="flex items-start justify-between gap-3 px-4 sm:px-0">
+    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-4 px-4 pb-24 pt-5">
+      <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="font-rajdhani text-2xl font-bold text-foreground">
             Pallet Tracking
@@ -531,7 +531,7 @@ export function AgentPalletTracking() {
         value={filter}
         onValueChange={(value) => value && setFilter(value as typeof filter)}
         aria-label="Filter pallets by status"
-        className="justify-start gap-2 overflow-x-auto px-4 pb-1 sm:-mx-4"
+        className="-mx-4 justify-start gap-2 overflow-x-auto px-4 pb-1"
       >
         {(
           [
@@ -568,7 +568,7 @@ export function AgentPalletTracking() {
           onClick={() => void handleAdvanceAll()}
           disabled={isAdvancingAll || updatingPalletId !== null}
           variant="default"
-          className="min-h-11 w-full"
+          className="h-12 w-full text-base"
         >
           {isAdvancingAll
             ? "Advancing…"
@@ -726,7 +726,7 @@ export function AgentPalletTracking() {
                           !scheduledOrderIds.has(pallet.order_id))
                       }
                       variant="default"
-                      className="min-h-11 w-full"
+                      className="h-12 w-full text-base"
                     >
                       {updatingPalletId === pallet.id
                         ? "Updating…"

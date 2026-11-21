@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OrderProductList } from "./OrderProductList";
-import { Product, Customer, Agent } from "@shared/api";
+import { Product, Customer, Agent, Truck } from "@shared/api";
 
 interface OrderItem {
   product_id: string;
@@ -14,8 +14,7 @@ interface AddOrderModalProps {
   onClose: () => void;
   customers: Customer[];
   agents: Agent[];
-  selectedAgentId: string;
-  onAgentChange: (agentId: string) => void;
+  trucks: Truck[];
   products: Product[];
   productStock: Record<string, number>;
   orderItems: OrderItem[];
@@ -34,8 +33,7 @@ export function AddOrderModal({
   onClose,
   customers,
   agents,
-  selectedAgentId,
-  onAgentChange,
+  trucks,
   products,
   productStock,
   orderItems,
@@ -56,6 +54,15 @@ export function AddOrderModal({
     return orderItems.reduce((sum, item) => sum + item.qty_ordered, 0);
   };
 
+  const selectedCustomer = customers.find((c) => c.id === newCustomerId);
+  const districtTruck = selectedCustomer?.district
+    ? [...trucks]
+        .filter((t) => t.district === selectedCustomer.district && agents.some((a) => a.id === t.agent_id && !a.is_archived))
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        .sort((a, b) => Number(b.status === "available") - Number(a.status === "available"))[0]
+    : undefined;
+  const inheritedAgent = agents.find((a) => a.id === districtTruck?.agent_id);
+
   return (
     <div className="flex-1 flex flex-col p-6 gap-6">
       <div className="page-header">
@@ -69,19 +76,6 @@ export function AddOrderModal({
 
         {/* Customer Selection */}
         <div className="bg-muted px-6 py-3 border-b border-border">
-          <label htmlFor="addordermodal-select-agent" className="block text-xs font-semibold text-foreground mb-2">Agent</label>
-          <NativeSelect id="addordermodal-select-agent"
-            value={selectedAgentId}
-            onChange={(e) => onAgentChange(e.target.value)}
-            className="w-full"
-          >
-            <option value="">Admin (no agent)</option>
-            {agents.filter((agent) => !agent.is_archived).map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.full_name || agent.user?.username || agent.id.slice(0, 8)}
-              </option>
-            ))}
-          </NativeSelect>
           <label htmlFor="addordermodal-select-customer" className="block text-xs font-semibold text-foreground mb-2">Select Customer *</label>
           <NativeSelect id="addordermodal-select-customer"
             value={newCustomerId}
@@ -95,6 +89,18 @@ export function AddOrderModal({
               </option>
             ))}
           </NativeSelect>
+          <label className="mt-3 block text-xs font-semibold text-foreground mb-2">Agent · from Truck Dispatch</label>
+          <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm">
+            {!selectedCustomer ? (
+              <span className="text-muted-foreground">Choose a customer to see the agent for their district</span>
+            ) : !selectedCustomer.district ? (
+              <span className="text-muted-foreground">This customer has no truck district. The order will be recorded under you.</span>
+            ) : inheritedAgent ? (
+              <span className="font-semibold text-foreground">{inheritedAgent.full_name || inheritedAgent.user?.username} <span className="font-normal text-muted-foreground">· {selectedCustomer.district}</span></span>
+            ) : (
+              <span className="text-muted-foreground">No agent assigned to the {selectedCustomer.district} truck. The order will be recorded under you.</span>
+            )}
+          </div>
           <label htmlFor="addordermodal-prepared-delivery-date" className="mt-3 block text-xs font-semibold text-foreground mb-2">Prepared Delivery Date</label>
           <Input id="addordermodal-prepared-delivery-date"
             type="date"

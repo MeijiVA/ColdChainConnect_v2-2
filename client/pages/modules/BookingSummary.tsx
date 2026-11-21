@@ -18,7 +18,7 @@ import { Plus, Calendar, CheckCircle, XCircle } from "lucide-react";
 import { TableBulkAction, TableFilterSelect, TableToolbar } from "@/components/TableToolbar";
 import { newestFirst } from "@/components/SortableHeader";
 import { TablePagination, paginate } from "@/components/TablePagination";
-import { Agent, Booking, Delivery, Truck, Customer, Product } from "@shared/api";
+import { Agent, Booking, Truck, Customer, Product } from "@shared/api";
 import { useAuth } from "../../hooks/useAuth";
 import { useCan } from "@/hooks/useCan";
 import { useSearchParams } from "react-router-dom";
@@ -34,7 +34,6 @@ export function BookingSummary() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [agentDistricts, setAgentDistricts] = useState<string[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [productStock, setProductStock] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -75,8 +74,6 @@ export function BookingSummary() {
   const [newCustomerId, setNewCustomerId] = useState("");
   const [preparedDeliveryDate, setPreparedDeliveryDate] = useState("");
   const [orderItems, setOrderItems] = useState<{ product_id: string; qty_ordered: number }[]>([]);
-  // null follows the agent on the open Truck Dispatch run; an explicit value is the admin's choice
-  const [newAgentId, setNewAgentId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [rollingBackId, setRollingBackId] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -98,7 +95,7 @@ export function BookingSummary() {
 
   const fetchAll = async () => {
     try {
-      const [bRes, tRes, cRes, pRes, invRes, dRes, agentsRes, deliveriesRes] = await Promise.all([
+      const [bRes, tRes, cRes, pRes, invRes, dRes, agentsRes] = await Promise.all([
         fetch("/api/bookings", { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/trucks", { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/customers", { headers: { Authorization: `Bearer ${token}` } }),
@@ -106,7 +103,6 @@ export function BookingSummary() {
         fetch("/api/products/inventory", { headers: { Authorization: `Bearer ${token}` } }),
         isAgent ? fetch("/api/agent-districts", { headers: { Authorization: `Bearer ${token}` } }) : Promise.resolve(null),
         isAgent ? Promise.resolve(null) : fetch("/api/agents", { headers: { Authorization: `Bearer ${token}` } }),
-        isAgent ? Promise.resolve(null) : fetch("/api/deliveries", { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       if (bRes.ok) setBookings(await bRes.json());
       if (tRes.ok) setTrucks(await tRes.json());
@@ -115,7 +111,6 @@ export function BookingSummary() {
       if (invRes.ok) setProductStock(await invRes.json());
       if (dRes?.ok) setAgentDistricts(await dRes.json());
       if (agentsRes?.ok) setAgents(await agentsRes.json());
-      if (deliveriesRes?.ok) setDeliveries(await deliveriesRes.json());
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error loading data");
@@ -200,9 +195,6 @@ export function BookingSummary() {
     }));
   };
 
-  const currentTruckAgentId = deliveries.find((delivery) => delivery.status !== "completed" && delivery.agent_id)?.agent_id ?? "";
-  const selectedAgentId = newAgentId ?? currentTruckAgentId;
-
   const getMaxQtyForProduct = (productId: string): number => {
     return productStock[productId] || 0;
   };
@@ -230,7 +222,6 @@ export function BookingSummary() {
           customer_id: newCustomerId,
           prepared_delivery_date: preparedDeliveryDate || undefined,
           items: orderItems,
-          agent_id: selectedAgentId || undefined,
           ...(override && { ar_override: true, ar_override_reason: override.reason }),
         }),
       });
@@ -259,7 +250,6 @@ export function BookingSummary() {
       setNewCustomerId("");
       setPreparedDeliveryDate("");
       setOrderItems([]);
-      setNewAgentId(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create order");
     } finally {
@@ -523,7 +513,6 @@ export function BookingSummary() {
     setNewCustomerId("");
     setPreparedDeliveryDate("");
     setOrderItems([{ product_id: "", qty_ordered: 1 }]);
-    setNewAgentId(null);
   };
 
   const filtered = newestFirst(bookings.filter((b) => {
@@ -777,8 +766,7 @@ export function BookingSummary() {
         onClose={closeAddModal}
         customers={customers}
         agents={agents}
-        selectedAgentId={selectedAgentId}
-        onAgentChange={setNewAgentId}
+        trucks={trucks}
         products={products}
         productStock={productStock}
         orderItems={orderItems}

@@ -1100,7 +1100,7 @@ function EditTruckModal({ truck, token, onClose, onSaved }: {
 }) {
   const [licensePlate, setLicensePlate]   = useState(truck.license_plate);
   const [truckDistrict, setTruckDistrict] = useState(truck.district);
-  const [truckStatus, setTruckStatus]     = useState(truck.status);
+  const [inMaintenance, setInMaintenance] = useState(truck.status === "maintenance");
   const [saving, setSaving]               = useState(false);
 
   const handleSave = async () => {
@@ -1110,7 +1110,7 @@ function EditTruckModal({ truck, token, onClose, onSaved }: {
       const res = await fetch(`/api/trucks/${truck.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ license_plate: licensePlate, district: truckDistrict, status: truckStatus }),
+        body: JSON.stringify({ license_plate: licensePlate, district: truckDistrict, status: inMaintenance ? "maintenance" : "available" }),
       });
       if (!res.ok) throw new Error(await res.text());
       await onSaved();
@@ -1134,15 +1134,11 @@ function EditTruckModal({ truck, token, onClose, onSaved }: {
               className="w-full" />
           </div>
         ))}
-        <div>
-          <label htmlFor="delivery-status-2" className="block text-xs font-semibold text-foreground mb-1">Status</label>
-          <NativeSelect id="delivery-status-2" value={truckStatus} onChange={(e) => setTruckStatus(e.target.value as Truck["status"])}
-            className="w-full">
-            <option value="available">Available</option>
-            <option value="in_transit">In Transit</option>
-            <option value="maintenance">Maintenance</option>
-          </NativeSelect>
-        </div>
+        <label className="flex items-center gap-2 text-sm text-foreground">
+          <input type="checkbox" checked={inMaintenance} onChange={(e) => setInMaintenance(e.target.checked)} />
+          Under maintenance
+        </label>
+        <p className="text-xs text-muted-foreground">Status is otherwise automatic: In Transit while a delivery run is in transit, otherwise Available.</p>
       </div>
       <div className="flex justify-end gap-2 pt-4 border-t border-border">
         <Button onClick={onClose} variant="outline">Cancel</Button>

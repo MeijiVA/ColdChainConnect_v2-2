@@ -119,10 +119,13 @@ export function Inventory() {
       const productsRes = await fetch("/api/products", { headers });
       const productsData = productsRes.ok ? await productsRes.json() : [];
 
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
       const qtyMap: Record<string, number> = {};
       for (const batch of batches) {
         for (const pallet of batch.pallets) {
           for (const item of pallet.items) {
+            if (item.expirationDate && parseIsoDate(item.expirationDate) < today) continue;
             qtyMap[item.productId] = (qtyMap[item.productId] || 0) + item.quantity;
           }
         }

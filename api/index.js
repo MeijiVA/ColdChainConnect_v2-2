@@ -331,10 +331,11 @@ var trucks = pgTable("trucks", {
 	license_plate: text("license_plate").notNull().unique(),
 	district: text("district").notNull(),
 	driver_id: text("driver_id").references(() => drivers.id),
+	agent_id: text("agent_id").references(() => agents.id, { onDelete: "set null" }),
 	status: truckStatusEnum("status").default("available"),
 	created_at: timestamp("created_at").defaultNow().notNull(),
 	updated_at: timestamp("updated_at").defaultNow().notNull()
-}, (table) => [index("trucks_driver_id_idx").on(table.driver_id)]);
+}, (table) => [index("trucks_driver_id_idx").on(table.driver_id), index("trucks_agent_id_idx").on(table.agent_id)]);
 var bookings = pgTable("bookings", {
 	id: text("id").primaryKey(),
 	customer_id: text("customer_id").notNull().references(() => customers.id),
@@ -1029,6 +1030,7 @@ var CreateTruckSchema = z.object({
 	license_plate: z.string().regex(/^[A-Z]{3} \d{3,4}$/, "License plate must look like ABC 1234"),
 	district: z.string().min(1, "District is required"),
 	driver_id: z.string().optional(),
+	agent_id: z.string().nullable().optional(),
 	status: z.enum([
 		"available",
 		"in_transit",
@@ -2736,14 +2738,28 @@ var getDriverSchedule = async (req, res) => {
 //#endregion
 //#region server/routes/agent-schedule.ts
 var getAgentSchedule = async (req, res) => {
-	if (!process.env.DATABASE_URL) return res.json({ deliveries: [] });
+	if (!process.env.DATABASE_URL) return res.json({
+		deliveries: [],
+		assigned_trucks: []
+	});
 	try {
 		const agent = await db.query.agents.findFirst({
 			where: eq(agents.user_id, req.user.userId),
 			columns: { id: true }
 		});
-		if (!agent) return res.json({ deliveries: [] });
-		const schedule = (await db.query.deliveries.findMany({
+		if (!agent) return res.json({
+			deliveries: [],
+			assigned_trucks: []
+		});
+		const assignedTrucks = await db.query.trucks.findMany({
+			where: eq(trucks.agent_id, agent.id),
+			columns: {
+				id: true,
+				license_plate: true,
+				district: true
+			}
+		});
+		const assignedDeliveries = await db.query.deliveries.findMany({
 			where: eq(deliveries.agent_id, agent.id),
 			with: {
 				truck: {
@@ -2812,7 +2828,17 @@ var getAgentSchedule = async (req, res) => {
 					}
 				} }
 			}
-		})).filter((delivery) => delivery.delivery_items.length > 0).map((delivery) => ({
+		});
+		const saleAgentUserIds = [...new Set(assignedDeliveries.flatMap((d) => d.delivery_items.flatMap((s) => s.invoice?.agent?.id ?? [])))];
+		const saleAgentProfiles = saleAgentUserIds.length ? await db.query.agents.findMany({
+			where: inArray(agents.user_id, saleAgentUserIds),
+			columns: {
+				user_id: true,
+				full_name: true
+			}
+		}) : [];
+		const fullNameByUserId = new Map(saleAgentProfiles.map((p) => [p.user_id, p.full_name?.trim() || null]));
+		const schedule = assignedDeliveries.filter((delivery) => delivery.delivery_items.length > 0).map((delivery) => ({
 			...delivery,
 			driver: delivery.driver ?? delivery.truck?.driver ?? null,
 			delivery_items: delivery.delivery_items.map((stop) => ({
@@ -2825,12 +2851,18 @@ var getAgentSchedule = async (req, res) => {
 					total_amount: stop.invoice.total_amount,
 					credit_applied_amount: stop.invoice.credit_applied_amount
 				} : null,
-				sale_agent: stop.invoice?.agent ?? null,
+				sale_agent: stop.invoice?.agent ? {
+					...stop.invoice.agent,
+					full_name: fullNameByUserId.get(stop.invoice.agent.id) ?? null
+				} : null,
 				pallets: stop.invoice?.booking?.order_pallets ?? [],
 				accounts_receivable: void 0
 			}))
 		}));
-		res.json({ deliveries: schedule });
+		res.json({
+			deliveries: schedule,
+			assigned_trucks: assignedTrucks
+		});
 	} catch (error) {
 		console.error("Error fetching agent schedule:", error);
 		res.status(500).json({ error: "Internal server error" });
@@ -2984,7 +3016,12 @@ var listTrucks = async (_req, res) => {
 	try {
 		if (!process.env.DATABASE_URL) return res.json([...demoTrucks].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
 		const allTrucks = await db.query.trucks.findMany({ orderBy: [desc(trucks.created_at)] });
-		res.json(allTrucks);
+		const inTransitRows = await db.selectDistinct({ truck_id: deliveries.truck_id }).from(deliveries).where(eq(deliveries.status, "in_transit"));
+		const inTransitTruckIds = new Set(inTransitRows.map((row) => row.truck_id));
+		res.json(allTrucks.map((truck) => ({
+			...truck,
+			status: truck.status === "maintenance" ? "maintenance" : inTransitTruckIds.has(truck.id) ? "in_transit" : "available"
+		})));
 	} catch (error) {
 		console.error("Error fetching trucks:", error);
 		res.status(500).json({ error: "Internal server error" });
@@ -2993,7 +3030,7 @@ var listTrucks = async (_req, res) => {
 var createTruck = async (req, res) => {
 	const parsed = CreateTruckSchema.safeParse(req.body);
 	if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
-	const { license_plate, district, driver_id } = parsed.data;
+	const { license_plate, district, driver_id, agent_id } = parsed.data;
 	try {
 		const id = randomUUID();
 		await db.insert(trucks).values({
@@ -3001,6 +3038,7 @@ var createTruck = async (req, res) => {
 			license_plate,
 			district,
 			driver_id,
+			agent_id: agent_id ?? null,
 			status: "available"
 		});
 		const newTruck = await db.query.trucks.findFirst({ where: eq(trucks.id, id) });
@@ -3015,7 +3053,7 @@ var updateTruck = async (req, res) => {
 	const { id } = req.params;
 	const parsed = UpdateTruckSchema.safeParse(req.body);
 	if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0].message });
-	const { license_plate, district, driver_id, status } = parsed.data;
+	const { license_plate, district, driver_id, agent_id, status } = parsed.data;
 	try {
 		const existing = await db.query.trucks.findFirst({ where: eq(trucks.id, id) });
 		if (!existing) return res.status(404).json({ error: "Truck not found" });
@@ -3023,6 +3061,7 @@ var updateTruck = async (req, res) => {
 			license_plate: license_plate || existing.license_plate,
 			district: district || existing.district,
 			driver_id: driver_id ?? existing.driver_id,
+			agent_id: agent_id === void 0 ? existing.agent_id : agent_id,
 			status: status || existing.status,
 			updated_at: /* @__PURE__ */ new Date()
 		}).where(eq(trucks.id, id));
@@ -3125,14 +3164,23 @@ async function estimateOrderTotal(items, discountRate) {
 }
 //#endregion
 //#region server/services/agent-bookings.ts
-/** Districts of the trucks on deliveries an agent is assigned to. */
+/** Districts of the trucks an agent is assigned to (Truck Dispatch > Change Agent controls this). */
 async function getAgentDistricts(userId) {
 	const agent = await db.query.agents.findFirst({
 		where: eq(agents.user_id, userId),
 		columns: { id: true }
 	});
 	if (!agent) return [];
-	return (await db.selectDistinct({ district: trucks.district }).from(deliveries).innerJoin(trucks, eq(deliveries.truck_id, trucks.id)).where(eq(deliveries.agent_id, agent.id))).map((row) => row.district);
+	return (await db.selectDistinct({ district: trucks.district }).from(trucks).where(eq(trucks.agent_id, agent.id))).map((row) => row.district);
+}
+/** User id of the agent on the truck serving a district (prefers an available truck), or null. */
+async function getDistrictAgentUserId(district) {
+	if (!district) return null;
+	const rows = await db.select({
+		user_id: agents.user_id,
+		status: trucks.status
+	}).from(trucks).innerJoin(agents, eq(trucks.agent_id, agents.id)).where(and(eq(trucks.district, district), eq(agents.is_archived, false))).orderBy(asc(trucks.created_at));
+	return (rows.find((row) => row.status === "available") ?? rows[0])?.user_id ?? null;
 }
 /** Invoices for the orders an agent created or is delivering. */
 async function getAgentInvoiceIds(userId) {
@@ -3212,12 +3260,15 @@ async function getReservedUnitsByProduct(executor, productIds, excludeBookingId)
 	}).from(order_item_reservations).where(and(eq(order_item_reservations.status, "reserved"), productIds ? inArray(order_item_reservations.product_id, productIds) : void 0, excludeBookingId ? ne(order_item_reservations.booking_id, excludeBookingId) : void 0)).groupBy(order_item_reservations.product_id);
 	return new Map(rows.map((row) => [row.productId, row.quantity]));
 }
+function notExpiredPalletItem() {
+	return or(isNull(pallet_items.expiration_date), gte(pallet_items.expiration_date, todayInManila()));
+}
 async function getStockUnitsByProduct(executor, productIds) {
 	if (productIds?.length === 0) return /* @__PURE__ */ new Map();
 	const rows = await executor.select({
 		productId: pallet_items.product_id,
 		quantity: sql`sum(${pallet_items.qty_units})::int`
-	}).from(pallet_items).innerJoin(batch_pallets, eq(pallet_items.pallet_id, batch_pallets.id)).innerJoin(inventory_batches, eq(batch_pallets.batch_id, inventory_batches.id)).where(and(eq(inventory_batches.is_archived, false), productIds ? inArray(pallet_items.product_id, productIds) : void 0)).groupBy(pallet_items.product_id);
+	}).from(pallet_items).innerJoin(batch_pallets, eq(pallet_items.pallet_id, batch_pallets.id)).innerJoin(inventory_batches, eq(batch_pallets.batch_id, inventory_batches.id)).where(and(eq(inventory_batches.is_archived, false), notExpiredPalletItem(), productIds ? inArray(pallet_items.product_id, productIds) : void 0)).groupBy(pallet_items.product_id);
 	return new Map(rows.map((row) => [row.productId, row.quantity]));
 }
 async function getAvailableUnitsByProduct(executor, productIds, excludeBookingId) {
@@ -3247,7 +3298,10 @@ async function getAvailableUnitsBySource(executor, stockItems, excludeBookingId)
 		sourceItemId: order_pallet_items.batch_item_id,
 		quantity: sql`sum(${order_pallet_items.qty_units})::int`
 	}).from(order_pallet_items).innerJoin(order_pallets, eq(order_pallet_items.pallet_id, order_pallets.id)).where(and(ne(order_pallets.status, "shipped"), inArray(order_pallet_items.batch_item_id, sourceIds))).groupBy(order_pallet_items.batch_item_id), getReservedUnitsByProduct(executor, productIds, excludeBookingId)]);
-	return applyReservationsToSourceItems(stockItems, new Map(palletRows.map((row) => [row.sourceItemId, row.quantity])), reservedByProduct);
+	const availableBySource = applyReservationsToSourceItems(stockItems, new Map(palletRows.map((row) => [row.sourceItemId, row.quantity])), reservedByProduct);
+	const today = todayInManila();
+	for (const item of stockItems) if (item.expiration_date && item.expiration_date < today) availableBySource.set(item.id, 0);
+	return availableBySource;
 }
 async function getAvailableUnitsBySourceForProducts(executor, productIds, excludeBookingId) {
 	if (productIds.length === 0) return /* @__PURE__ */ new Map();
@@ -3255,8 +3309,9 @@ async function getAvailableUnitsBySourceForProducts(executor, productIds, exclud
 		id: pallet_items.id,
 		product_id: pallet_items.product_id,
 		qty_units: pallet_items.qty_units,
-		created_at: pallet_items.created_at
-	}).from(pallet_items).innerJoin(batch_pallets, eq(pallet_items.pallet_id, batch_pallets.id)).innerJoin(inventory_batches, eq(batch_pallets.batch_id, inventory_batches.id)).where(and(eq(inventory_batches.is_archived, false), inArray(pallet_items.product_id, productIds))), excludeBookingId);
+		created_at: pallet_items.created_at,
+		expiration_date: pallet_items.expiration_date
+	}).from(pallet_items).innerJoin(batch_pallets, eq(pallet_items.pallet_id, batch_pallets.id)).innerJoin(inventory_batches, eq(batch_pallets.batch_id, inventory_batches.id)).where(and(eq(inventory_batches.is_archived, false), notExpiredPalletItem(), inArray(pallet_items.product_id, productIds))), excludeBookingId);
 }
 async function reserveBookingItemsTx(executor, bookingId, items, actorId, replacedStatus = "released") {
 	const quantitiesByProduct = /* @__PURE__ */ new Map();
@@ -3371,7 +3426,7 @@ var listAgentDistricts = async (req, res) => {
 	}
 };
 var createBooking = async (req, res) => {
-	const { customer_id, prepared_delivery_date, items, ar_override, ar_override_reason, agent_id } = req.body;
+	const { customer_id, prepared_delivery_date, items, ar_override, ar_override_reason } = req.body;
 	if (!customer_id || !items || !Array.isArray(items)) return res.status(400).json({ error: "Customer ID and items array are required" });
 	if (!req.user) return res.status(401).json({ error: "Authentication required" });
 	if (!process.env.DATABASE_URL) return res.status(201).json({
@@ -3383,27 +3438,15 @@ var createBooking = async (req, res) => {
 	});
 	try {
 		if (!await db.query.users.findFirst({ where: eq(users.id, req.user.userId) })) return res.status(401).json({ error: "User account not found. Please log in again." });
+		const customer = await db.query.customers.findFirst({
+			where: eq(customers.id, customer_id),
+			columns: { district: true }
+		});
 		let orderCreatorId = req.user.userId;
-		if (agent_id) {
-			if (req.user.role !== "admin") return res.status(403).json({ error: "Only admins can assign an agent to an order" });
-			const selectedAgent = await db.query.agents.findFirst({
-				where: eq(agents.id, agent_id),
-				columns: {
-					user_id: true,
-					is_archived: true
-				}
-			});
-			if (!selectedAgent || selectedAgent.is_archived) return res.status(400).json({ error: "Selected agent was not found" });
-			orderCreatorId = selectedAgent.user_id;
-		}
 		if (req.user.role === "agent") {
-			const customer = await db.query.customers.findFirst({
-				where: eq(customers.id, customer_id),
-				columns: { district: true }
-			});
 			const districts = await getAgentDistricts(req.user.userId);
 			if (!customer?.district || !districts.includes(customer.district)) return res.status(403).json({ error: "You can only create orders for customers in your assigned districts" });
-		}
+		} else orderCreatorId = await getDistrictAgentUserId(customer?.district) ?? req.user.userId;
 		if (items.some((item) => !item?.product_id || !Number.isInteger(Number(item.qty_ordered)) || Number(item.qty_ordered) <= 0)) return res.status(400).json({ error: "Each item needs a product_id and a positive integer qty_ordered" });
 		const credit = await loadCustomerCredit(customer_id);
 		if (!credit) return res.status(404).json({ error: "Customer not found" });
@@ -4041,13 +4084,17 @@ var createDelivery = async (req, res) => {
 			where: eq(agents.user_id, saleOwnerId),
 			columns: { id: true }
 		}))?.id ?? null;
-		const deliveryId = randomUUID();
-		await db.insert(deliveries).values({
+		const runDate = scheduled_date ?? todayIsoDate();
+		const openRun = await db.query.deliveries.findFirst({ where: and(eq(deliveries.truck_id, truck_id), eq(deliveries.scheduled_date, runDate), eq(deliveries.status, "pending"), resolvedAgentId ? eq(deliveries.agent_id, resolvedAgentId) : isNull(deliveries.agent_id)) });
+		const deliveryId = openRun?.id ?? randomUUID();
+		if (openRun) {
+			if (scheduled_time !== void 0) await db.update(deliveries).set({ scheduled_time }).where(eq(deliveries.id, deliveryId));
+		} else await db.insert(deliveries).values({
 			id: deliveryId,
 			truck_id,
 			driver_id: driver_id ?? truck.driver_id ?? null,
 			agent_id: resolvedAgentId,
-			scheduled_date: scheduled_date ?? todayIsoDate(),
+			scheduled_date: runDate,
 			scheduled_time: scheduled_time ?? null,
 			status: "pending"
 		});
@@ -4059,7 +4106,7 @@ var createDelivery = async (req, res) => {
 			status: "pending"
 		});
 		const newDelivery = await findDeliveryById(deliveryId);
-		if (req.user) await logAction(req.user.userId, "create", "delivery", deliveryId, void 0, newDelivery);
+		if (req.user) await logAction(req.user.userId, openRun ? "update" : "create", "delivery", deliveryId, openRun ?? void 0, newDelivery);
 		res.status(201).json(newDelivery);
 	} catch (error) {
 		console.error("Error creating delivery:", error);
@@ -5535,7 +5582,8 @@ var SECTIONS = {
 	dispatch: {
 		table: deliveries,
 		column: deliveries.created_at,
-		module: "delivery-operations"
+		module: "delivery-operations",
+		where: (viewer) => sql`${inArray(deliveries.status, ["pending", "in_transit"])}${viewer?.role === "agent" ? sql` and ${deliveries.agent_id} in (select ${agents.id} from ${agents} where ${agents.user_id} = ${viewer.userId})` : sql``}`
 	},
 	accounts: {
 		table: accounts_receivable,
@@ -5551,7 +5599,7 @@ var SECTIONS = {
 		table: expenses,
 		column: expenses.created_at,
 		module: "accounting",
-		where: (viewerId) => sql`${expenses.submitted_by} is distinct from ${viewerId ?? null}`
+		where: (viewer) => sql`${expenses.submitted_by} is distinct from ${viewer?.userId ?? null}`
 	}
 };
 /** GET /api/unseen?receipts=<ISO>...: how many records each tab gained since the given time, plus current counts: `reorder`, `outstanding`, `pendingOrders`, and `unverifiedPayments`. One round trip to the database for all tabs. */
@@ -5584,7 +5632,7 @@ var getUnseenCounts = async (req, res) => {
 			const raw = req.query[key];
 			const since = typeof raw === "string" ? new Date(raw) : null;
 			if (!(user?.role === "admin" || permissions?.includes(section.module)) || !since || Number.isNaN(since.getTime())) continue;
-			const extra = typeof section.where === "function" ? section.where(user?.userId) : section.where;
+			const extra = typeof section.where === "function" ? section.where(user) : section.where;
 			parts.push(sql`(select count(*)::int from ${section.table} where ${section.column} > ${since.toISOString()}::timestamp${extra ? sql` and ${extra}` : sql``}) as ${sql.identifier(key)}`);
 		}
 		if (parts.length > 0) {

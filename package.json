@@ -17,6 +17,7 @@
     "db:migrate:order-reservations": "tsx server/apply-order-reservations-migration.ts",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx server/seed.ts",
+    "db:seed:history": "tsx server/seed-historical-data.ts",
     "db:reset": "tsx server/reset.ts"
   },
   "dependencies": {

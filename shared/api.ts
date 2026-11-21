@@ -455,6 +455,7 @@ export interface Truck {
   license_plate: string;
   district: string;
   driver_id?: string;
+  agent_id?: string | null;
   status: "available" | "in_transit" | "maintenance";
   created_at: string;
   updated_at: string;
@@ -466,6 +467,7 @@ export const CreateTruckSchema = z.object({
     .regex(/^[A-Z]{3} \d{3,4}$/, "License plate must look like ABC 1234"),
   district: z.string().min(1, "District is required"),
   driver_id: z.string().optional(),
+  agent_id: z.string().nullable().optional(),
   status: z.enum(["available", "in_transit", "maintenance"]).default("available"),
 });
 
@@ -704,6 +706,7 @@ export type AgentScheduleDelivery = Omit<Delivery, "agent" | "driver"> & {
 
 export interface AgentScheduleResponse {
   deliveries: AgentScheduleDelivery[];
+  assigned_trucks: { id: string; license_plate: string; district: string }[];
 }
 
 export const CreateDeliveryItemSchema = z.object({

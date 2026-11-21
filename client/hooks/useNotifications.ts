@@ -176,6 +176,9 @@ export function useNotifications() {
 
         const activeDeliveries = schedule.deliveries.filter((delivery) => delivery.status !== "completed");
         const truckMap = new Map<string, string>();
+        for (const truck of schedule.assigned_trucks ?? []) {
+          truckMap.set(truck.id, `${truck.license_plate} · ${truck.district}`);
+        }
         for (const delivery of activeDeliveries) {
           const key = delivery.truck?.id ?? delivery.id;
           truckMap.set(key, `${delivery.truck?.license_plate ?? "Truck not assigned"} · ${delivery.truck?.district ?? "District not assigned"}`);

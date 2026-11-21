@@ -208,26 +208,6 @@ export function Preparation() {
     }
   };
 
-  const handleUndoPrepared = async (orderId: string) => {
-    try {
-      const orderPallets = pallets.filter((p) => p.order_id === orderId && p.status === "prepared");
-      for (const pallet of orderPallets) {
-        const response = await fetch(`/api/pallets/${pallet.id}/status`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ status: "draft" }),
-        });
-        if (!response.ok) throw new Error("Failed to undo pallet preparation.");
-      }
-      void fetchAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to undo prepared status");
-    }
-  };
-
   const handleDeleteOrderPallets = async (orderId: string) => {
     try {
       const orderPallets = pallets.filter((p) => p.order_id === orderId && p.status === "draft");
@@ -437,7 +417,6 @@ export function Preparation() {
                 const approvedPalletCount = orderPallets.filter((p) => p.status === "approved").length;
                 const draftPalletCount = orderPallets.filter((p) => p.status === "draft").length;
                 const isPrepared = isOrderPrepared(order.id);
-                const hasConfirmedOrShippedPallet = orderPallets.some((p) => p.status === "approved" || p.status === "shipped");
 
                 return (
                   <TableRow key={order.id}>
@@ -504,7 +483,7 @@ export function Preparation() {
                                 onClick={() => navigate(`/booking-dispatch/inventory?order=${order.id}`)}
                                 variant="success"
                               >
-                                Prepared
+                                Preparing
                               </Button>
                             )}
                             {canDeletePallets && (
@@ -519,15 +498,13 @@ export function Preparation() {
                         {/* After marked prepared: show badge + Undo */}
                         {isPrepared && (
                           <>
-                            <span className="px-3 py-2 text-xs font-semibold text-green bg-green/10 rounded-lg">
+                            <Button
+                              onClick={() => navigate(`/booking-dispatch/inventory?order=${order.id}`)}
+                              variant="success"
+                              size="sm"
+                            >
                               ✓ Prepared
-                            </span>
-                            {canUpdatePalletStatus && !hasConfirmedOrShippedPallet && (
-                              <Button
-                                onClick={() => handleUndoPrepared(order.id)} type="button" variant="warning" size="sm">
-                                Undo
-                              </Button>
-                            )}
+                            </Button>
                           </>
                         )}
                       </div>

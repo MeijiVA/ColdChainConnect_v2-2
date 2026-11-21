@@ -1,12 +1,12 @@
 import { eq } from "drizzle-orm";
 import type { RequestHandler } from "express";
 import { db } from "../db";
-import { accounts_receivable, agents, deliveries } from "../db/schema";
+import { accounts_receivable, agents, deliveries, trucks } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
 
 export const getAgentSchedule: RequestHandler = async (req: AuthRequest, res) => {
   if (!process.env.DATABASE_URL) {
-    return res.json({ deliveries: [] });
+    return res.json({ deliveries: [], assigned_trucks: [] });
   }
 
   try {
@@ -15,7 +15,12 @@ export const getAgentSchedule: RequestHandler = async (req: AuthRequest, res) =>
       columns: { id: true },
     });
 
-    if (!agent) return res.json({ deliveries: [] });
+    if (!agent) return res.json({ deliveries: [], assigned_trucks: [] });
+
+    const assignedTrucks = await db.query.trucks.findMany({
+      where: eq(trucks.agent_id, agent.id),
+      columns: { id: true, license_plate: true, district: true },
+    });
 
     const assignedDeliveries = await db.query.deliveries.findMany({
       where: eq(deliveries.agent_id, agent.id),
@@ -92,7 +97,7 @@ export const getAgentSchedule: RequestHandler = async (req: AuthRequest, res) =>
         })),
       }));
 
-    res.json({ deliveries: schedule });
+    res.json({ deliveries: schedule, assigned_trucks: assignedTrucks });
   } catch (error) {
     console.error("Error fetching agent schedule:", error);
     res.status(500).json({ error: "Internal server error" });

@@ -130,11 +130,14 @@ export function Topbar({ userName, onLogout }: TopbarProps) {
 
   return (
     <header ref={headerRef} className="bg-navy px-4 md:px-8 py-3 sm:py-4 flex flex-wrap items-center flex-shrink-0 sticky top-0 z-10 shadow-sm gap-2 sm:gap-4 md:gap-6">
-      <div className={`flex items-center gap-4 min-w-0 ${role === "agent" ? "flex-1" : "flex-1 sm:flex-none"}`}>
+      {role === "admin" && (
+        <span className="text-2xs font-bold text-chrome-muted md:hidden">Workspace</span>
+      )}
+      <div className={`flex items-center gap-4 min-w-0 ${role === "agent" ? "flex-1" : "flex-1 sm:flex-none"} ${role === "admin" ? "justify-center sm:justify-start" : ""}`}>
         <div className="flex items-center gap-3 flex-shrink-0">
           <div className="flex items-center gap-2">
             <img src="https://cdn.builder.io/api/v1/image/assets%2Feac2d0d867f54007b4538c37b7be16a7%2F29275c5234184b8a9c0e21283e9dec28?format=webp&width=800&height=1200" alt="ACDP Logo" className="w-8 h-8 object-cover rounded-full" />
-            <div className="font-rajdhani text-xl font-bold text-white hidden sm:block">
+            <div className={`font-rajdhani text-xl font-bold text-white ${role === "admin" ? "" : "hidden sm:block"}`}>
               ACDP
             </div>
           </div>

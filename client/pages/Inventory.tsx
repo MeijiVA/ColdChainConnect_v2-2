@@ -65,6 +65,12 @@ interface PalletDisplay {
   totalQty: number;
 }
 
+function getProductImageUrl(imageFilename?: string) {
+  if (!imageFilename) return "/placeholder.svg";
+  if (imageFilename.startsWith("http")) return imageFilename;
+  return `/uploads/${imageFilename}`;
+}
+
 export function Inventory() {
   const canManageBatches = useCan("batch:manage");
   const canManageProducts = useCan("product:manage");
@@ -626,6 +632,10 @@ function ExtraInfoModal({ product, batches, onClose, onSelectPallet }: { product
       </div>
       <div className="bg-card rounded-2xl border border-border overflow-hidden">
 
+        <div className="flex justify-center bg-muted p-4">
+          <img src={getProductImageUrl(product.imageFilename)} alt={product.description} className="max-h-64 h-auto max-w-full rounded-lg object-contain" />
+        </div>
+
         <div className="p-6 space-y-6">
           <div>
             <h3 className="text-xs font-bold text-muted-foreground mb-3">Summary</h3>
@@ -896,6 +906,7 @@ function CreateBatchForm({ newBatchName, setNewBatchName, pallets, setPallets, o
   const allProducts = dbProducts.length > 0 ? dbProducts : products.map((p) => ({ id: p.id, name: p.description, sku: p.sku }));
   const getName = (id: string) => dbProducts.find((p) => p.id === id)?.name || products.find((p) => p.id === id)?.description || "";
   const getSku = (id: string) => dbProducts.find((p) => p.id === id)?.sku || products.find((p) => p.id === id)?.sku || "";
+  const getImageFilename = (id: string) => dbProducts.find((p) => p.id === id)?.image_filename || products.find((p) => p.id === id)?.imageFilename;
 
   const addItem = (productId: string) => {
     if (!productId) return;
@@ -985,9 +996,14 @@ function CreateBatchForm({ newBatchName, setNewBatchName, pallets, setPallets, o
             {items.map((item, itemIdx) => (
               <div key={itemIdx} className="bg-card border border-border rounded p-2 space-y-2">
                 <div className="flex items-end gap-2">
-                  <div className="flex-1">
-                    <div className="text-xs font-semibold text-foreground">{getName(item.productId)}</div>
-                    <div className="text-xs text-muted-foreground">{getSku(item.productId)}</div>
+                  <div className="flex flex-1 items-center gap-3">
+                    <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md border border-border bg-muted">
+                      <img src={getProductImageUrl(getImageFilename(item.productId))} alt={getName(item.productId)} className="h-full w-full object-cover" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-foreground">{getName(item.productId)}</div>
+                      <div className="text-xs text-muted-foreground">{getSku(item.productId)}</div>
+                    </div>
                   </div>
                   <Input type="number" min="0" value={item.quantity} onChange={(e) => updateItem(itemIdx, "quantity", parseInt(e.target.value) || 0)} className="w-20 px-2 py-1 border border-border rounded text-sm focus:outline-none focus:border-accent-2" />
                   <Button type="button" variant="destructive" size="sm" onClick={() => removeItem(itemIdx)} aria-label="Remove product">✕</Button>

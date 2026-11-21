@@ -31,7 +31,7 @@ export const createTruck: RequestHandler = async (req: AuthRequest, res) => {
     return res.status(400).json({ error: parsed.error.issues[0].message });
   }
 
-  const { license_plate, district, driver_id } = parsed.data;
+  const { license_plate, district, driver_id, agent_id } = parsed.data;
 
   try {
     const id = randomUUID();
@@ -40,6 +40,7 @@ export const createTruck: RequestHandler = async (req: AuthRequest, res) => {
       license_plate,
       district,
       driver_id,
+      agent_id: agent_id ?? null,
       status: "available",
     });
 
@@ -72,7 +73,7 @@ export const updateTruck: RequestHandler = async (req: AuthRequest, res) => {
     return res.status(400).json({ error: parsed.error.issues[0].message });
   }
 
-  const { license_plate, district, driver_id, status } = parsed.data;
+  const { license_plate, district, driver_id, agent_id, status } = parsed.data;
 
   try {
     const existing = await db.query.trucks.findFirst({
@@ -89,6 +90,7 @@ export const updateTruck: RequestHandler = async (req: AuthRequest, res) => {
         license_plate: license_plate || existing.license_plate,
         district: district || existing.district,
         driver_id: driver_id ?? existing.driver_id,
+        agent_id: agent_id === undefined ? existing.agent_id : agent_id,
         status: status || existing.status,
         updated_at: new Date(),
       })

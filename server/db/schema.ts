@@ -231,11 +231,13 @@ export const trucks = pgTable("trucks", {
   license_plate: text("license_plate").notNull().unique(),
   district: text("district").notNull(),
   driver_id: text("driver_id").references(() => drivers.id),
+  agent_id: text("agent_id").references(() => agents.id, { onDelete: "set null" }),
   status: truckStatusEnum("status").default("available"),
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
   index("trucks_driver_id_idx").on(table.driver_id),
+  index("trucks_agent_id_idx").on(table.agent_id),
 ]);
 
 // Bookings table

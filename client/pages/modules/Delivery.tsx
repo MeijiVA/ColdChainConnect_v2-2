@@ -290,6 +290,12 @@ export function DeliveryDispatch() {
     const hasIncompleteStops = runsToChange.some((run) => run.delivery_items.some((item) => item.status !== "completed"));
     if (hasIncompleteStops && !(await confirmAction("Some runs on this truck still have incomplete stops. Force changing their assigned agent?"))) return;
     try {
+      const truckRes = await fetch(`/api/trucks/${selectedTruck!.id}`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ agent_id: agentId || null }),
+      });
+      if (!truckRes.ok) throw new Error(await truckRes.text());
       for (const run of runsToChange) {
         const res = await fetch(`/api/deliveries/${run.id}/assign`, {
           method: "PATCH",
@@ -869,7 +875,7 @@ export function DeliveryDispatch() {
           <ChangeTruckAgentModal
             truck={selectedTruck}
             agents={agents}
-            currentAgentId={openTruckRuns[0]?.agent_id ?? ""}
+            currentAgentId={selectedTruck.agent_id ?? openTruckRuns[0]?.agent_id ?? ""}
             onClose={() => setShowChangeTruckAgentModal(false)}
             onSave={handleChangeTruckAgent}
           />
@@ -996,7 +1002,7 @@ function ChangeTruckAgentModal({ truck, agents, currentAgentId, onClose, onSave 
             <option key={agent.id} value={agent.id}>{agentLabel(agent)}</option>
           ))}
         </NativeSelect>
-        <p className="mt-3 text-xs text-muted-foreground">Applies to this truck's open runs.</p>
+        <p className="mt-3 text-xs text-muted-foreground">The agent can order for this truck's district while assigned. Unassigned frees the agent and also clears them from open runs.</p>
       </div>
       <div className="flex justify-end gap-2 pt-4 border-t border-border">
         <Button onClick={onClose} variant="outline">

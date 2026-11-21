@@ -43,13 +43,13 @@ const queryClient = new QueryClient({
 const AppLayout = () => {
   const { logout, user } = useAuth();
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col md:h-dvh md:min-h-0 md:overflow-hidden">
       <Topbar userName={user?.username || "User"} onLogout={logout} />
       <div className="flex min-h-0 flex-1">
         <AdminNavigation />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex flex-1">
-            <div className="flex min-w-0 flex-1 flex-col bg-background pb-32 md:pb-0">
+        <div className="flex min-w-0 flex-1 flex-col md:min-h-0">
+          <div className="flex flex-1 md:min-h-0">
+            <div className="flex min-w-0 flex-1 flex-col bg-background pb-32 md:min-h-0 md:overflow-y-auto md:pb-0">
               <RouteBoundary><Outlet /></RouteBoundary>
             </div>
           </div>

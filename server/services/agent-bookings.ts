@@ -4,7 +4,7 @@ import { db } from "../db";
 import { agents, bookings, deliveries, delivery_items, drivers, invoices, trucks } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
 
-/** Districts of the trucks on deliveries an agent is assigned to. */
+/** Districts of the trucks an agent is assigned to, plus those of deliveries they manage. */
 export async function getAgentDistricts(userId: string): Promise<string[]> {
   const agent = await db.query.agents.findFirst({
     where: eq(agents.user_id, userId),
@@ -12,12 +12,15 @@ export async function getAgentDistricts(userId: string): Promise<string[]> {
   });
   if (!agent) return [];
 
-  const rows = await db
-    .selectDistinct({ district: trucks.district })
-    .from(deliveries)
-    .innerJoin(trucks, eq(deliveries.truck_id, trucks.id))
-    .where(eq(deliveries.agent_id, agent.id));
-  return rows.map((row) => row.district);
+  const [assignedTrucks, deliveryTrucks] = await Promise.all([
+    db.selectDistinct({ district: trucks.district }).from(trucks).where(eq(trucks.agent_id, agent.id)),
+    db
+      .selectDistinct({ district: trucks.district })
+      .from(deliveries)
+      .innerJoin(trucks, eq(deliveries.truck_id, trucks.id))
+      .where(eq(deliveries.agent_id, agent.id)),
+  ]);
+  return [...new Set([...assignedTrucks, ...deliveryTrucks].map((row) => row.district))];
 }
 
 /** Invoices for the orders an agent created or is delivering. */

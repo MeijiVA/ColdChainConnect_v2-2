@@ -61,20 +61,49 @@ function cameraStartMessage(error: unknown): string {
     : "Camera could not be started.";
 }
 
-function drawScaled(bitmap: ImageBitmap, longestSide: number) {
+/** Draws the bitmap scaled to `longestSide` on a white canvas with a quiet-zone border; crops and screenshots often have none. */
+function drawScaled(bitmap: ImageBitmap, longestSide: number, padding = 0) {
   const scale = longestSide / Math.max(bitmap.width, bitmap.height);
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const pad = Math.round(longestSide * padding);
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.width = width + pad * 2;
+  canvas.height = height + pad * 2;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Could not process selected image.");
-  context.imageSmoothingEnabled = scale < 1;
+  context.fillStyle = "#fff"; // transparent PNGs would otherwise decode as black
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, pad, pad, width, height);
   return canvas;
 }
 
-/** Tries the image at several sizes: big photos blur thin bars when downsampled, tiny ones need enlarging. */
+type NativeBarcodeDetector = {
+  detect: (source: ImageBitmapSource) => Promise<{ rawValue: string }[]>;
+};
+
+/** The browser's built-in detector (Chrome/Android, Safari) copes with dense and blurry codes better than ZXing. */
+async function decodeWithNativeDetector(bitmap: ImageBitmap): Promise<string | null> {
+  const Detector = (
+    window as unknown as {
+      BarcodeDetector?: new (options?: { formats?: string[] }) => NativeBarcodeDetector;
+    }
+  ).BarcodeDetector;
+  if (!Detector) return null;
+  try {
+    const detector = new Detector({
+      formats: ["qr_code", "code_128", "code_39", "ean_13", "ean_8", "upc_a"],
+    });
+    const found = await detector.detect(bitmap);
+    return found.find((item) => item.rawValue)?.rawValue ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Tries native detection, then ZXing at several sizes and quiet-zone paddings. */
 async function decodeImageFile(file: File): Promise<string> {
   const reader = createReader();
   let bitmap: ImageBitmap | null = null;
@@ -94,14 +123,19 @@ async function decodeImageFile(file: File): Promise<string> {
   }
 
   try {
+    const native = await decodeWithNativeDetector(bitmap);
+    if (native) return native;
+
     const longest = Math.max(bitmap.width, bitmap.height);
-    const sizes = [...new Set([Math.min(longest, 2400), 1600, 1000, 2400])];
+    const sizes = [...new Set([Math.min(longest, 2400), 1600, 1000, 2400, 800])];
     let lastError: unknown = new Error("No barcode found.");
-    for (const size of sizes) {
-      try {
-        return reader.decodeFromCanvas(drawScaled(bitmap, size)).getText();
-      } catch (error) {
-        lastError = error;
+    for (const padding of [0.08, 0]) {
+      for (const size of sizes) {
+        try {
+          return reader.decodeFromCanvas(drawScaled(bitmap, size, padding)).getText();
+        } catch (error) {
+          lastError = error;
+        }
       }
     }
     throw lastError;
@@ -192,7 +226,7 @@ export function AgentBarcodeScanner({
       onDetectedRef.current(code);
     } catch {
       setScanError(
-        "Could not read a barcode in that image. Use a sharp, well-lit photo with the whole code in frame, or enter the code manually.",
+        "Could not read a code in that image. Use a sharp, well-lit photo with the whole code in frame, or enter the code manually.",
       );
     } finally {
       setIsDecodingImage(false);

@@ -96,6 +96,7 @@ export function AgentPalletTracking() {
   const [updatingPalletId, setUpdatingPalletId] = useState<string | null>(null);
   const [isAdvancingAll, setIsAdvancingAll] = useState(false);
   const [error, setError] = useState("");
+  const [showPalletBreakdown, setShowPalletBreakdown] = useState(false);
 
   // Once a pallet ships, jump to the Delivery Schedule tab, which opens the payment prompt for that order's stop.
   const openDeliveryPayment = (orderId: string) =>
@@ -464,39 +465,63 @@ export function AgentPalletTracking() {
         </div>
       </header>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-        {(
-          [
-            ["Total", pallets.length],
-            [
-              "Preparing",
-              pallets.filter(
-                (pallet) =>
-                  pallet.status === "draft" || pallet.status === "prepared",
-              ).length,
-            ],
-            [
-              "In transit",
-              pallets.filter((pallet) => pallet.status === "approved").length,
-            ],
-            [
-              "Dispatched",
-              pallets.filter((pallet) => pallet.status === "shipped").length,
-            ],
-          ] as const
-        ).map(([label, count]) => (
-          <div
-            key={label}
-            className="rounded-2xl border border-border bg-card px-3 py-3"
-          >
+      <div className="rounded-2xl border border-border bg-card px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
             <p className="text-xs font-semibold text-muted-foreground">
-              {label}
+              Pallets to load
             </p>
             <p className="mt-1 font-rajdhani text-2xl font-bold text-foreground">
-              {count}
+              {pallets.filter((pallet) => pallet.status !== "shipped").length}
             </p>
           </div>
-        ))}
+          <Button
+            variant="outline"
+            className="min-h-10"
+            aria-expanded={showPalletBreakdown}
+            onClick={() => setShowPalletBreakdown((open) => !open)}
+          >
+            {showPalletBreakdown ? "Hide details" : "View details"}
+            {showPalletBreakdown ? (
+              <ChevronUp size={16} />
+            ) : (
+              <ChevronDown size={16} />
+            )}
+          </Button>
+        </div>
+        {showPalletBreakdown && (
+          <dl className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3 sm:grid-cols-4">
+            {(
+              [
+                ["Total", pallets.length],
+                [
+                  "Preparing",
+                  pallets.filter(
+                    (pallet) =>
+                      pallet.status === "draft" || pallet.status === "prepared",
+                  ).length,
+                ],
+                [
+                  "In transit",
+                  pallets.filter((pallet) => pallet.status === "approved").length,
+                ],
+                [
+                  "Dispatched",
+                  pallets.filter((pallet) => pallet.status === "shipped").length,
+                ],
+              ] as const
+            ).map(([label, count]) => (
+              <div key={label}>
+                <dt className="text-xs font-semibold text-muted-foreground">
+                  {label}
+                </dt>
+                <dd className="font-rajdhani text-lg font-bold text-foreground">
+                  {count}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
       </div>
 
       <label className="flex min-h-12 items-center gap-2 rounded-xl border border-border bg-card px-3 text-muted-foreground focus-within:border-accent-2">

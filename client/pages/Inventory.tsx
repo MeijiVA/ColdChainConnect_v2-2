@@ -84,7 +84,7 @@ export function Inventory() {
   const [newBatchName, setNewBatchName] = useState("");
   const [startBatchCreation, setStartBatchCreation] = useState(false);
   const [batchSearch, setBatchSearch] = useState("");
-  const [stockFilter, setStockFilter] = useState("all");
+  const [stockFilter, setStockFilter] = useState(searchParams.get("stock") === "low" ? "low" : "all");
   const [expiryFilter, setExpiryFilter] = useState("all");
   const [batchCreatedSince, setBatchCreatedSince] = useState("");
   const [inventorySort, setInventorySort] = useState<SortState<"name" | "cost" | "stock" | "reorder" | "expiry">>(null);
@@ -108,6 +108,10 @@ export function Inventory() {
     nextParams.delete("action");
     setSearchParams(nextParams, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("stock") === "low") setStockFilter("low");
+  }, [searchParams]);
 
   const itemsPerPage = 10;
 

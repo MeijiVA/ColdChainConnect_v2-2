@@ -102,6 +102,11 @@ function isItemActive(path: string, pathname: string) {
 
 const BADGE_LABEL: Partial<Record<BadgeKey, string>> = { reorder: "to reorder", outstanding: "outstanding", unverifiedPayments: "to verify" };
 
+const BADGE_QUERY_BY_PATH: Record<string, string> = {
+  "/information-management/inventory": "?stock=low",
+  "/booking-dispatch/order-summary": "?status=pending",
+};
+
 function NewBadge({ count, label = "new", collapsed }: { count: number; label?: string; collapsed?: boolean }) {
   if (count <= 0) return null;
   return (
@@ -128,7 +133,7 @@ function NavigationLink({
   const count = useUnseenCounts()[badgeKey as BadgeKey] ?? 0;
   return (
     <NavLink
-      to={item.path}
+      to={`${item.path}${count > 0 ? (BADGE_QUERY_BY_PATH[item.path] ?? "") : ""}`}
       end={item.path === "/"}
       onClick={onNavigate}
       title={collapsed ? item.label : undefined}

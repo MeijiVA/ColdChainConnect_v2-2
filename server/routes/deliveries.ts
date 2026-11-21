@@ -1,6 +1,6 @@
 import type { RequestHandler } from "express";
 import { randomUUID } from "crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { deliveries, delivery_items, accounts_receivable, invoices, agents, customers, trucks } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
@@ -135,18 +135,33 @@ export const createDelivery: RequestHandler = async (
       columns: { id: true },
     });
     const resolvedAgentId = saleAgent?.id ?? null;
-    const deliveryId = randomUUID();
+    const runDate = scheduled_date ?? todayIsoDate();
 
-    // Create delivery
-    await db.insert(deliveries).values({
-      id: deliveryId,
-      truck_id,
-      driver_id: driver_id ?? truck.driver_id ?? null,
-      agent_id: resolvedAgentId,
-      scheduled_date: scheduled_date ?? todayIsoDate(),
-      scheduled_time: scheduled_time ?? null,
-      status: "pending",
+    const openRun = await db.query.deliveries.findFirst({
+      where: and(
+        eq(deliveries.truck_id, truck_id),
+        eq(deliveries.scheduled_date, runDate),
+        eq(deliveries.status, "pending"),
+        resolvedAgentId ? eq(deliveries.agent_id, resolvedAgentId) : isNull(deliveries.agent_id),
+      ),
     });
+
+    const deliveryId = openRun?.id ?? randomUUID();
+    if (openRun) {
+      if (scheduled_time !== undefined) {
+        await db.update(deliveries).set({ scheduled_time }).where(eq(deliveries.id, deliveryId));
+      }
+    } else {
+      await db.insert(deliveries).values({
+        id: deliveryId,
+        truck_id,
+        driver_id: driver_id ?? truck.driver_id ?? null,
+        agent_id: resolvedAgentId,
+        scheduled_date: runDate,
+        scheduled_time: scheduled_time ?? null,
+        status: "pending",
+      });
+    }
 
     // Create delivery items (destinations)
     for (const dest of destinations) {
@@ -164,10 +179,10 @@ export const createDelivery: RequestHandler = async (
     if (req.user) {
       await logAction(
         req.user.userId,
-        "create",
+        openRun ? "update" : "create",
         "delivery",
         deliveryId,
-        undefined,
+        openRun ?? undefined,
         newDelivery
       );
     }

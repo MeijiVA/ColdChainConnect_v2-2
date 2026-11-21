@@ -3,10 +3,10 @@ import { Button } from "@/components/ui/button";
 import { confirmAction } from "@/lib/confirm";
 import { Fragment, useState } from "react";
 import { ArrowLeft, ChevronDown, ChevronRight, MoreVertical } from "lucide-react";
-import { Booking, Customer, InventoryBatch, Pallet, formatCustomerAddress, totalDiscountRate } from "@shared/api";
+import { Booking, Customer, Delivery, InventoryBatch, Pallet, Truck, formatCustomerAddress, totalDiscountRate } from "@shared/api";
 import { Card } from "@/components/ui/card";
 import { Table } from "@/components/ui/table";
-import { batchSummary, formatMoney, groupPalletItemsByProduct, palletTotal, palletStatusOptions } from "./palletUtils";
+import { formatMoney, groupPalletItemsByProduct, palletTotal, palletStatusOptions } from "./palletUtils";
 import { PalletStatusBadge } from "./PalletTable";
 import { PalletBatchBreakdown } from "./PalletBatchBreakdown";
 
@@ -14,6 +14,8 @@ interface PalletDetailProps {
   pallet: Pallet;
   order: Booking | null;
   customer: Customer | null;
+  delivery: Delivery | null;
+  truck: Truck | null;
   batches: InventoryBatch[];
   getProductName: (productId: string) => string;
   /** The server only lets admin and agent change a pallet's status; others see the pallet read-only. */
@@ -24,10 +26,24 @@ interface PalletDetailProps {
   onBack: () => void;
 }
 
+function formatDeliveryDate(delivery: Delivery) {
+  if (!delivery.scheduled_date) return "Not scheduled";
+  const [year, month, day] = delivery.scheduled_date.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("en-PH");
+}
+
+function formatDeliveryTime(value?: string | null) {
+  if (!value) return "Time not set";
+  const [hours, minutes] = value.split(":").map(Number);
+  return new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(new Date(2000, 0, 1, hours, minutes));
+}
+
 export function PalletDetail({
   pallet,
   order,
   customer,
+  delivery,
+  truck,
   batches,
   getProductName,
   canChangeStatus,
@@ -85,7 +101,7 @@ export function PalletDetail({
               disabled={!order}
               variant="outline"
             >
-              Print delivery sheet
+              Shipping label
             </Button>
             {canChangeStatus && <div className="flex items-center gap-2">
               <Button
@@ -124,6 +140,8 @@ export function PalletDetail({
           <div>
             <p className="text-xs font-semibold text-muted-foreground">Customer</p>
             <p className="mt-1 font-medium text-foreground">{customer?.store_name ?? "Unknown customer"}</p>
+            <p className="mt-3 text-xs font-semibold text-muted-foreground">District</p>
+            <p className="mt-1 text-sm text-foreground">{customer?.district ?? "—"}</p>
           </div>
           <div className="md:col-span-1 xl:col-span-2">
             <p className="text-xs font-semibold text-muted-foreground">Delivery address</p>
@@ -133,6 +151,25 @@ export function PalletDetail({
             <p className="text-xs font-semibold text-muted-foreground">Order</p>
             <p className="mt-1 font-mono text-sm text-foreground">{order?.id ?? pallet.order_id}</p>
             <p className="mt-1 text-xs text-muted-foreground">Created {new Date(pallet.created_at).toLocaleDateString()}</p>
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground">Delivery date</p>
+            <p className="mt-1 text-sm text-foreground">{delivery ? formatDeliveryDate(delivery) : "Not scheduled"}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground">Delivery time</p>
+            <p className="mt-1 text-sm text-foreground">{delivery ? formatDeliveryTime(delivery.scheduled_time) : "—"}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground">Truck</p>
+            <p className="mt-1 text-sm text-foreground">{truck ? `${truck.license_plate} · ${truck.district}` : "Not on a truck"}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground">Run status</p>
+            <p className="mt-1 text-sm capitalize text-foreground">{delivery ? delivery.status.replace("_", " ") : "—"}</p>
           </div>
         </div>
       </Card>
@@ -164,7 +201,6 @@ export function PalletDetail({
                           {isExpanded ? <ChevronDown size={16} className="mt-0.5 shrink-0" /> : <ChevronRight size={16} className="mt-0.5 shrink-0" />}
                           <span>
                             <span className="block font-medium text-foreground">{getProductName(group.productId)}</span>
-                            <span className="block text-xs text-muted-foreground">{batchSummary(group.batches)}</span>
                           </span>
                         </button>
                       </td>

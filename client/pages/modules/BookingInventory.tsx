@@ -14,10 +14,8 @@ import { PalletStats } from "@/components/pallets/PalletStats";
 import { PalletToolbar, PalletStatusFilter } from "@/components/pallets/PalletToolbar";
 import { PalletTable, PalletEntry } from "@/components/pallets/PalletTable";
 import { PalletDetail } from "@/components/pallets/PalletDetail";
-import { DeliverySheet } from "@/components/pallets/DeliverySheet";
-import { PalletPrintAllDialog } from "@/components/pallets/PalletPrintAllDialog";
+import { DeliverySheet, DeliverySheetSection } from "@/components/pallets/DeliverySheet";
 import { DatePresetFilter, isInDatePreset } from "@/components/pallets/palletUtils";
-import { localScheduleDate } from "@/lib/agentSchedule";
 import { confirmAction } from "@/lib/confirm";
 
 type DeliveryWithItems = Delivery & { delivery_items?: DeliveryItem[] };
@@ -38,9 +36,8 @@ export function BookingInventory() {
   const [deliveries, setDeliveries] = useState<DeliveryWithItems[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [batches, setBatches] = useState<InventoryBatch[]>([]);
-  const [sheetOrder, setSheetOrder] = useState<Booking | null>(null);
-  const [showPrintAll, setShowPrintAll] = useState(false);
-  const [printDate, setPrintDate] = useState(() => localScheduleDate(new Date()));
+  const [sheetSections, setSheetSections] = useState<DeliverySheetSection[] | null>(null);
+  const [checkedPalletIds, setCheckedPalletIds] = useState<Set<string>>(() => new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState(searchParams.get("order") ?? "");
   const [selectedPalletId, setSelectedPalletId] = useState<string | null>(null);
@@ -169,7 +166,6 @@ export function BookingInventory() {
     const customer = order ? order.customer ?? customers.find((c) => c.id === order.customer_id) ?? null : null;
     return { pallet, customer };
   });
-  const printEntries = entries.filter(({ pallet }) => localScheduleDate(new Date(pallet.created_at)) === printDate);
 
   const filteredEntries = entries.filter(({ pallet, customer }) => {
     if (statusFilter !== "all" && pallet.status !== statusFilter) return false;
@@ -237,6 +233,36 @@ export function BookingInventory() {
   const advanceableCount = visiblePallets.filter(canAdvancePallet).length;
 
   const selected = entries.find((entry) => entry.pallet.id === selectedPalletId) ?? null;
+  const selectedDelivery = selected
+    ? deliveries.find((delivery) =>
+        (delivery.delivery_items ?? []).some((item) =>
+          invoices.some((invoice) => invoice.id === item.invoice_id && invoice.booking_id === selected.pallet.order_id),
+        ),
+      ) ?? null
+    : null;
+  const selectedTruck = selected
+    ? trucks.find((truck) => truck.id === (selected.pallet.truck_id ?? selectedDelivery?.truck_id)) ?? null
+    : null;
+
+  const checkedPallets = visiblePallets.filter((pallet) => checkedPalletIds.has(pallet.id));
+
+  const buildSheetSections = (palletList: Pallet[]): DeliverySheetSection[] =>
+    bookings.flatMap((order) => {
+      const orderPallets = palletList.filter((pallet) => pallet.order_id === order.id);
+      return orderPallets.length ? [{ order, pallets: orderPallets }] : [];
+    });
+
+  const setChecked = (palletIds: string[], checked: boolean) =>
+    setCheckedPalletIds((current) => {
+      const next = new Set(current);
+      for (const id of palletIds) {
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+
+  const openShippingLabels = () => setSheetSections(buildSheetSections(checkedPallets));
 
   if (isLoading) return <LoadingSpinner />;
 
@@ -259,16 +285,14 @@ export function BookingInventory() {
             </Button>
           )}
           {isAdmin && (
-            <>
-              <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground">
-                <span>Date</span>
-                <Input type="date" value={printDate} onChange={(event) => setPrintDate(event.target.value)} className="h-auto w-auto border-0 bg-transparent p-0 text-foreground focus-visible:ring-0 focus-visible:ring-offset-0" />
-              </label>
-              <Button onClick={() => setShowPrintAll(true)} variant="outline" className="flex items-center gap-2">
-                <Printer size={16} />
-                Print all ({printEntries.length})
-              </Button>
-            </>
+            <Button
+              onClick={openShippingLabels}
+              disabled={checkedPallets.length === 0}
+              title={checkedPallets.length === 0 ? "Select pallets to print their shipping labels" : undefined}
+              variant="outline"
+            >
+              <Printer size={16} /> Shipping label ({checkedPallets.length})
+            </Button>
           )}
         </div>
       </div>
@@ -284,11 +308,17 @@ export function BookingInventory() {
           pallet={selected.pallet}
           order={bookings.find((b) => b.id === selected.pallet.order_id) ?? null}
           customer={selected.customer}
+          delivery={selectedDelivery}
+          truck={selectedTruck}
           batches={batches}
           getProductName={getProductName}
           canChangeStatus={canUpdatePalletStatus}
           onStatusChange={(status) => handleStatusChange(selected.pallet.id, status)}
-          onPrintSheet={() => setSheetOrder(bookings.find((b) => b.id === selected.pallet.order_id) ?? null)}
+          onPrintSheet={() =>
+            setSheetSections(
+              buildSheetSections(pallets.filter((pallet) => pallet.order_id === selected.pallet.order_id)),
+            )
+          }
           isUpdatingStatus={isUpdatingStatus}
           onBack={() => setSelectedPalletId(null)}
         />
@@ -336,7 +366,12 @@ export function BookingInventory() {
                       {group.entries.length} pallet{group.entries.length === 1 ? "" : "s"}
                     </span>
                   </div>
-                  <PalletTable entries={group.entries} onSelect={setSelectedPalletId} />
+                  <PalletTable
+                    entries={group.entries}
+                    onSelect={setSelectedPalletId}
+                    checkedIds={checkedPalletIds}
+                    onSetChecked={setChecked}
+                  />
                 </section>
               ))}
             </div>
@@ -346,23 +381,9 @@ export function BookingInventory() {
 
     </div>
   
-      {(sheetOrder) && (
-        <PageDialog onClose={() => setSheetOrder(null)}>
-<DeliverySheet
-        order={sheetOrder}
-        pallets={pallets.filter((pallet) => pallet.order_id === sheetOrder.id)}
-        batches={batches}
-        onClose={() => setSheetOrder(null)}
-      />
-        </PageDialog>
-      )}
-      {(isAdmin && showPrintAll) && (
-        <PageDialog onClose={() => setShowPrintAll(false)}>
-<PalletPrintAllDialog
-        entries={printEntries}
-        date={printDate}
-        onClose={() => setShowPrintAll(false)}
-      />
+      {sheetSections && (
+        <PageDialog onClose={() => setSheetSections(null)}>
+          <DeliverySheet sections={sheetSections} batches={batches} />
         </PageDialog>
       )}
     </>

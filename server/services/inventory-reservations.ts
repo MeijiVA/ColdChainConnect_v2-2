@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { applyReservationsToSourceItems } from "./reservation-allocation";
+import { todayInManila } from "../../shared/api";
 import {
   batch_pallets,
   booking_items,
@@ -31,6 +32,10 @@ export async function getReservedUnitsByProduct(executor: any, productIds?: stri
   return new Map(rows.map((row: { productId: string; quantity: number }) => [row.productId, row.quantity]));
 }
 
+function notExpiredPalletItem() {
+  return or(isNull(pallet_items.expiration_date), gte(pallet_items.expiration_date, todayInManila()));
+}
+
 export async function getStockUnitsByProduct(executor: any, productIds?: string[]): Promise<Map<string, number>> {
   if (productIds?.length === 0) return new Map<string, number>();
 
@@ -44,6 +49,7 @@ export async function getStockUnitsByProduct(executor: any, productIds?: string[
     .innerJoin(inventory_batches, eq(batch_pallets.batch_id, inventory_batches.id))
     .where(and(
       eq(inventory_batches.is_archived, false),
+      notExpiredPalletItem(),
       productIds ? inArray(pallet_items.product_id, productIds) : undefined,
     ))
     .groupBy(pallet_items.product_id);
@@ -101,7 +107,7 @@ export async function lockStockForProducts(executor: any, productIds: string[]) 
 
 export async function getAvailableUnitsBySource(
   executor: any,
-  stockItems: Array<{ id: string; product_id: string; qty_units: number; created_at: Date | string }>,
+  stockItems: Array<{ id: string; product_id: string; qty_units: number; created_at: Date | string; expiration_date?: string | null }>,
   excludeBookingId?: string,
 ) {
   if (stockItems.length === 0) return new Map<string, number>();
@@ -123,11 +129,16 @@ export async function getAvailableUnitsBySource(
     getReservedUnitsByProduct(executor, productIds, excludeBookingId),
   ]);
 
-  return applyReservationsToSourceItems(
+  const availableBySource = applyReservationsToSourceItems(
     stockItems,
     new Map<string, number>(palletRows.map((row: { sourceItemId: string; quantity: number }) => [row.sourceItemId, row.quantity])),
     reservedByProduct,
   );
+  const today = todayInManila();
+  for (const item of stockItems) {
+    if (item.expiration_date && item.expiration_date < today) availableBySource.set(item.id, 0);
+  }
+  return availableBySource;
 }
 
 export async function getAvailableUnitsBySourceForProducts(
@@ -137,11 +148,11 @@ export async function getAvailableUnitsBySourceForProducts(
 ) {
   if (productIds.length === 0) return new Map<string, number>();
   const stockItems = await executor
-    .select({ id: pallet_items.id, product_id: pallet_items.product_id, qty_units: pallet_items.qty_units, created_at: pallet_items.created_at })
+    .select({ id: pallet_items.id, product_id: pallet_items.product_id, qty_units: pallet_items.qty_units, created_at: pallet_items.created_at, expiration_date: pallet_items.expiration_date })
     .from(pallet_items)
     .innerJoin(batch_pallets, eq(pallet_items.pallet_id, batch_pallets.id))
     .innerJoin(inventory_batches, eq(batch_pallets.batch_id, inventory_batches.id))
-    .where(and(eq(inventory_batches.is_archived, false), inArray(pallet_items.product_id, productIds)));
+    .where(and(eq(inventory_batches.is_archived, false), notExpiredPalletItem(), inArray(pallet_items.product_id, productIds)));
   return getAvailableUnitsBySource(executor, stockItems, excludeBookingId);
 }
 

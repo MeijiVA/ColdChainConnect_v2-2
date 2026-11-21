@@ -434,9 +434,9 @@ export function DeliveryDispatch() {
         <div className="border-t border-border pt-3">
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-semibold text-muted-foreground">Agent</p>
-            {canUpdateDelivery && openTruckRuns.length > 0 && (
+            {canUpdateDelivery && (
               <Button onClick={() => setShowChangeTruckAgentModal(true)} variant="link" className="h-auto p-0">
-                {truckAgentNames.length > 0 ? "Change" : "Assign"}
+                Change Agent
               </Button>
             )}
           </div>

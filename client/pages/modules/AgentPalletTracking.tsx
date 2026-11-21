@@ -1,7 +1,11 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Button } from "@/components/ui/button";
 import { confirmAction } from "@/lib/confirm";
-import { palletBarcodeValue } from "@/lib/palletCode";
+import {
+  orderBarcodeValue,
+  palletBarcodeValue,
+  parseScannedCode,
+} from "@/lib/palletCode";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
@@ -80,6 +84,7 @@ export function AgentPalletTracking() {
   const handledScanKeyRef = useRef<string | null>(null);
   const [scanPalletId, setScanPalletId] = useState<string | null>(null);
   const [pallets, setPallets] = useState<TrackingPallet[]>([]);
+  const [bookingIds, setBookingIds] = useState<string[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<InventoryBatch[]>([]);
   const [scheduledOrderIds, setScheduledOrderIds] = useState<Set<string>>(
@@ -93,9 +98,11 @@ export function AgentPalletTracking() {
     () => new Set(),
   );
   const [isLoading, setIsLoading] = useState(true);
+  const [trackingLoaded, setTrackingLoaded] = useState(false);
   const [updatingPalletId, setUpdatingPalletId] = useState<string | null>(null);
   const [isAdvancingAll, setIsAdvancingAll] = useState(false);
   const [error, setError] = useState("");
+  const [scanError, setScanError] = useState("");
   const [showPalletBreakdown, setShowPalletBreakdown] = useState(false);
 
   // Once a pallet ships, jump to the Delivery Schedule tab, which opens the payment prompt for that order's stop.
@@ -148,6 +155,7 @@ export function AgentPalletTracking() {
         ),
       );
 
+      setBookingIds(bookings.map((booking) => booking.id));
       setProducts(productList);
       setBatches(batchRes.ok ? await batchRes.json() : []);
       setPallets(
@@ -158,6 +166,7 @@ export function AgentPalletTracking() {
             order: bookingsById.get(pallet.order_id),
           })),
       );
+      setTrackingLoaded(true);
     } catch (fetchError) {
       setError(
         fetchError instanceof Error
@@ -175,21 +184,63 @@ export function AgentPalletTracking() {
   useAutoRefresh(fetchTracking, { enabled: Boolean(token) });
 
   useEffect(() => {
-    if (isLoading || !scanCode || handledScanKeyRef.current === location.key)
+    if (
+      isLoading ||
+      !trackingLoaded ||
+      handledScanKeyRef.current === location.key
+    )
       return;
     handledScanKeyRef.current = location.key;
-    setSearch(scanCode);
+    setScanPalletId(null);
+    setScanError("");
+    if (!scanCode) return;
 
-    const code = scanCode.toLowerCase();
-    const pallet = pallets.find((item) => item.id.toLowerCase() === code);
-    if (pallet) {
-      setScanPalletId(pallet.id);
-      return;
+    setSearch(scanCode);
+    setFilter("all");
+    setCustomerFilter("all");
+    setError("");
+
+    const parsed = parseScannedCode(scanCode);
+    const value = parsed.value.toLowerCase();
+    const palletMatches =
+      parsed.kind === "order"
+        ? []
+        : pallets.filter((pallet) =>
+            parsed.kind === "pallet"
+              ? pallet.id.slice(0, 8).toLowerCase() === value
+              : pallet.id.toLowerCase() === value,
+          );
+    const orderMatches =
+      parsed.kind === "pallet"
+        ? []
+        : bookingIds.filter((id) =>
+            parsed.kind === "order"
+              ? id.slice(0, 8).toLowerCase() === value
+              : id.toLowerCase() === value,
+          );
+
+    if (palletMatches.length + orderMatches.length > 1) {
+      setScanError(
+        "This barcode matches multiple pallets or orders. Use a full ID instead.",
+      );
+    } else if (palletMatches.length === 1) {
+      setScanPalletId(palletMatches[0].id);
+    } else if (orderMatches.length === 1) {
+      const orderId = orderMatches[0];
+      setSearch(orderId);
+      if (
+        !pallets.some(
+          (pallet) => pallet.order_id.toLowerCase() === orderId.toLowerCase(),
+        )
+      ) {
+        setScanError(
+          `${orderBarcodeValue(orderId)} has no pallets yet. Pallets must be created in Preparation first.`,
+        );
+      }
+    } else {
+      setScanError("No pallet or order matches this barcode.");
     }
-    if (!pallets.some((item) => item.order_id.toLowerCase() === code)) {
-      setError("No pallet or order matches this barcode.");
-    }
-  }, [isLoading, location.key, pallets, scanCode]);
+  }, [bookingIds, isLoading, location.key, pallets, scanCode, trackingLoaded]);
 
   const scanPallet =
     pallets.find((pallet) => pallet.id === scanPalletId) ?? null;
@@ -221,6 +272,8 @@ export function AgentPalletTracking() {
       return [
         pallet.id,
         pallet.order_id,
+        palletBarcodeValue(pallet.id),
+        orderBarcodeValue(pallet.order_id),
         pallet.order?.customer?.store_name,
         pallet.order?.customer?.location,
       ].some((value) => value?.toLowerCase().includes(query));
@@ -503,11 +556,13 @@ export function AgentPalletTracking() {
                 ],
                 [
                   "In transit",
-                  pallets.filter((pallet) => pallet.status === "approved").length,
+                  pallets.filter((pallet) => pallet.status === "approved")
+                    .length,
                 ],
                 [
                   "Dispatched",
-                  pallets.filter((pallet) => pallet.status === "shipped").length,
+                  pallets.filter((pallet) => pallet.status === "shipped")
+                    .length,
                 ],
               ] as const
             ).map(([label, count]) => (
@@ -528,7 +583,10 @@ export function AgentPalletTracking() {
         <Search size={17} />
         <Input
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            setScanError("");
+          }}
           placeholder="Search pallet, order, or customer"
           className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-foreground/80 dark:placeholder:text-foreground/70"
         />
@@ -578,12 +636,12 @@ export function AgentPalletTracking() {
         ))}
       </ToggleGroup>
 
-      {error && (
+      {(error || scanError) && (
         <p
           role="alert"
           className="rounded-xl border border-red/20 bg-red/5 p-3 text-sm text-red"
         >
-          {error}
+          {error || scanError}
         </p>
       )}
 
@@ -602,17 +660,19 @@ export function AgentPalletTracking() {
       )}
 
       {filteredPallets.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border bg-card px-5 py-10 text-center">
-          <Package size={30} className="mx-auto mb-3 text-muted-foreground" />
-          <p className="font-semibold text-foreground">
-            {pallets.length ? "No matching pallets" : "No pallets yet"}
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {pallets.length
-              ? "Try another search, customer, or status filter."
-              : "Pallets for your orders will appear here."}
-          </p>
-        </div>
+        !scanError && (
+          <div className="rounded-2xl border border-dashed border-border bg-card px-5 py-10 text-center">
+            <Package size={30} className="mx-auto mb-3 text-muted-foreground" />
+            <p className="font-semibold text-foreground">
+              {pallets.length ? "No matching pallets" : "No pallets yet"}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {pallets.length
+                ? "Try another search, customer, or status filter."
+                : "Pallets for your orders will appear here."}
+            </p>
+          </div>
+        )
       ) : (
         <div className="flex flex-col gap-3">
           {filteredPallets.map((pallet) => {

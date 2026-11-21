@@ -129,6 +129,15 @@ describe("Agent pallet barcode tracking", () => {
   it("filters the list for a short order code", async () => {
     renderTracking("ord-aaaaaaaa");
     expect(await screen.findByText("Alpha")).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByPlaceholderText(
+            "Search pallet, order, or customer",
+          ) as HTMLInputElement
+        ).value,
+      ).toBe(orderA),
+    );
     expect(screen.queryByText("Bravo")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByText("Scanned pallet")).toBeNull();
@@ -146,6 +155,15 @@ describe("Agent pallet barcode tracking", () => {
   it("filters for a legacy full order ID", async () => {
     renderTracking(orderA.toUpperCase());
     expect(await screen.findByText("Alpha")).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByPlaceholderText(
+            "Search pallet, order, or customer",
+          ) as HTMLInputElement
+        ).value,
+      ).toBe(orderA),
+    );
     expect(screen.queryByText("Bravo")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -154,10 +172,32 @@ describe("Agent pallet barcode tracking", () => {
     "recognizes an order with no pallets: %s",
     async (code) => {
       renderTracking(code);
-      expect(await screen.findByText("No matching pallets")).toBeTruthy();
-      expect(screen.queryByRole("alert")).toBeNull();
+      expect((await screen.findByRole("alert")).textContent).toBe(
+        "ORD-CCCCCCCC has no pallets yet. Pallets must be created in Preparation first.",
+      );
+      expect(
+        (
+          screen.getByPlaceholderText(
+            "Search pallet, order, or customer",
+          ) as HTMLInputElement
+        ).value,
+      ).toBe(emptyOrder);
+      expect(screen.queryByText("No matching pallets")).toBeNull();
     },
   );
+
+  it("uses the full order ID when another order shares its prefix", async () => {
+    const sharedPrefixOrder = "cccccccc-4444-4444-8444-444444444444";
+    bookings.push(booking(sharedPrefixOrder, "Shared prefix"));
+    pallets.push(
+      pallet("99999999-4444-4444-8444-444444444444", sharedPrefixOrder),
+    );
+    renderTracking(emptyOrder);
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "ORD-CCCCCCCC has no pallets yet. Pallets must be created in Preparation first.",
+    );
+    expect(screen.queryByText("Shared prefix")).toBeNull();
+  });
 
   it.each([
     "PLT-DEADBEEF",

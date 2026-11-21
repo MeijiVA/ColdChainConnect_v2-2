@@ -6,6 +6,7 @@ import type {
 } from "express";
 import type { SalesForecastChatRequest } from "@shared/api";
 import { postSalesForecastChat } from "../routes/sales-forecast-chat";
+import * as geminiService from "./sales-forecast-chat";
 import {
   generateSalesForecastAnswer,
   GeminiRequestError,
@@ -66,6 +67,8 @@ async function callRoute(body: unknown) {
 beforeEach(() => {
   vi.stubEnv("GEMINI_API_KEY", "secret-test-key");
   vi.stubEnv("GEMINI_MODEL", "");
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -110,95 +113,120 @@ describe("sales forecast Gemini chat", () => {
     vi.stubGlobal("fetch", fetchMock);
     await expect(generateSalesForecastAnswer(input)).rejects.toMatchObject({
       code: "key",
-      status: 503,
+      status: undefined,
+      publicMessage: expect.stringContaining("GEMINI_API_KEY"),
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([
-    [400, { error: { details: [{ reason: "API_KEY_INVALID" }] } }, "key", 503],
-    [401, {}, "key", 503],
-    [403, {}, "key", 503],
-    [404, {}, "model", 503],
-    [429, {}, "quota", 429],
-    [400, {}, "request", 502],
-    [500, {}, "request", 502],
-  ])(
-    "classifies HTTP %s safely",
-    async (upstreamStatus, body, code, status) => {
-      vi.stubGlobal(
-        "fetch",
-        vi
-          .fn()
-          .mockResolvedValue(
-            jsonResponse(
-              { ...body, raw: "secret-test-key attacker text" },
-              upstreamStatus,
-            ),
+    [400, { error: { details: [{ reason: "API_KEY_INVALID" }] } }, "key"],
+    [
+      400,
+      {
+        error: {
+          message:
+            "API key not valid. secret-test-key private-model attacker text",
+        },
+      },
+      "key",
+    ],
+    [400, { error: { message: "API_KEY_INVALID secret-test-key" } }, "key"],
+    [401, {}, "key"],
+    [403, {}, "key"],
+    [404, {}, "model"],
+    [429, {}, "quota"],
+    [400, {}, "request"],
+    [500, {}, "request"],
+  ])("classifies HTTP %s safely", async (upstreamStatus, body, code) => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(
+            { ...body, raw: "secret-test-key attacker text" },
+            upstreamStatus,
           ),
-      );
-      const log = vi.spyOn(console, "error");
-      const result = await callRoute(input);
-      expect(result.statusCode).toBe(status);
-      expect(result.payload).toEqual({ error: expect.any(String) });
-      expect(JSON.stringify(result.payload)).not.toMatch(
-        /secret-test-key|attacker text/,
-      );
-      expect(log).not.toHaveBeenCalled();
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue(jsonResponse(body, upstreamStatus)),
-      );
-      await expect(generateSalesForecastAnswer(input)).rejects.toMatchObject({
-        code,
-        status,
-      });
-    },
-  );
+        ),
+    );
+    vi.stubEnv("GEMINI_MODEL", "private-model");
+    const result = await callRoute(input);
+    expect(result.statusCode).toBe(502);
+    expect(result.payload).toEqual({ error: expect.any(String) });
+    expect(JSON.stringify(result.payload)).not.toMatch(
+      /secret-test-key|private-model|attacker text/,
+    );
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toMatch(
+      /secret-test-key|private-model|attacker text/,
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(body, upstreamStatus)),
+    );
+    await expect(generateSalesForecastAnswer(input)).rejects.toMatchObject({
+      code,
+      status: upstreamStatus,
+      publicMessage: expect.any(String),
+    });
+  });
 
   it.each([
-    [new TypeError("secret-test-key network failure"), "network", 502],
+    [new TypeError("secret-test-key network failure"), "network"],
     [
       Object.assign(new Error("secret-test-key timeout"), {
         name: "TimeoutError",
       }),
       "timeout",
-      504,
     ],
-    [Object.assign(new Error("abort"), { name: "AbortError" }), "timeout", 504],
+    [Object.assign(new Error("abort"), { name: "AbortError" }), "timeout"],
   ])(
     "classifies transport failures without exposing their messages",
-    async (error, code, status) => {
+    async (error, code) => {
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(error));
       const result = await callRoute(input);
-      expect(result.statusCode).toBe(status);
+      expect(result.statusCode).toBe(502);
       expect(JSON.stringify(result.payload)).not.toContain("secret-test-key");
+      expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain(
+        "secret-test-key",
+      );
       await expect(generateSalesForecastAnswer(input)).rejects.toMatchObject({
         code,
-        status,
+        status: undefined,
+        publicMessage: expect.any(String),
       });
     },
   );
 
   it.each([
-    [{ promptFeedback: { blockReason: "secret-test-key" } }, /blocked/i],
-    [{ candidates: [{ finishReason: "SAFETY" }] }, /blocked/i],
-    [{ candidates: [{ finishReason: "MAX_TOKENS" }] }, /output limit/i],
+    [{ promptFeedback: { blockReason: "secret-test-key" } }, "blocked"],
+    [{ candidates: [{ finishReason: "SAFETY" }] }, "blocked"],
+    [{ candidates: [{ finishReason: "MAX_TOKENS" }] }, "output_limit"],
     [
       {
         candidates: [
           { content: { parts: [{ text: "private thought", thought: true }] } },
         ],
       },
-      /empty answer/i,
+      "no_text",
     ],
-    [{ candidates: [] }, /empty answer/i],
-  ])("gives safe diagnostics for an empty answer", async (body, message) => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
+    [{ candidates: [] }, "no_text"],
+  ])("gives safe diagnostics for an empty answer", async (body, reason) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async () => jsonResponse(body)),
+    );
+    expect(await generateSalesForecastAnswer(input)).toBeNull();
     const result = await callRoute(input);
     expect(result.statusCode).toBe(502);
-    expect(result.payload).toEqual({ error: expect.stringMatching(message) });
-    expect(JSON.stringify(result.payload)).not.toMatch(
+    expect(result.payload).toEqual({
+      error: expect.stringMatching(/empty answer/i),
+    });
+    expect(console.warn).toHaveBeenCalledWith(
+      "Gemini forecast chat returned no answer",
+      { reason },
+    );
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toMatch(
       /secret-test-key|private thought/,
     );
   });
@@ -212,7 +240,7 @@ describe("sales forecast Gemini chat", () => {
     );
     await expect(generateSalesForecastAnswer(input)).rejects.toMatchObject({
       code: "request",
-      status: 502,
+      status: 200,
     });
     vi.stubGlobal(
       "fetch",
@@ -222,27 +250,26 @@ describe("sales forecast Gemini chat", () => {
     );
     await expect(generateSalesForecastAnswer(input)).rejects.toMatchObject({
       code: "model",
-      status: 503,
+      status: 404,
     });
   });
 
   it("classifies response body network and timeout failures", async () => {
     for (const [error, code, status] of [
-      [new TypeError("connection failed"), "network", 502],
+      [new TypeError("connection failed"), "network", 200],
       [
         Object.assign(new Error("timeout"), { name: "TimeoutError" }),
         "timeout",
-        504,
+        200,
       ],
     ] as const) {
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue({
-            ok: true,
-            json: vi.fn().mockRejectedValue(error),
-          }),
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: vi.fn().mockRejectedValue(error),
+        }),
       );
       await expect(generateSalesForecastAnswer(input)).rejects.toMatchObject({
         code,
@@ -271,7 +298,25 @@ describe("sales forecast Gemini chat", () => {
     expect(success.payload).toEqual({ answer: "Restock carefully." });
   });
 
+  it("only exposes the public message for a typed error and masks unexpected errors", async () => {
+    const error = new GeminiRequestError("quota", "Safe quota message", 429);
+    error.message = "secret-test-key private upstream text";
+    const generate = vi
+      .spyOn(geminiService, "generateSalesForecastAnswer")
+      .mockRejectedValue(error);
+    const typed = await callRoute(input);
+    expect(typed.statusCode).toBe(502);
+    expect(typed.payload).toEqual({ error: "Safe quota message" });
+    generate.mockRejectedValue(new Error("secret-test-key unexpected error"));
+    const unexpected = await callRoute(input);
+    expect(unexpected.statusCode).toBe(502);
+    expect(JSON.stringify(unexpected.payload)).not.toContain("secret-test-key");
+  });
+
   it("exports a distinguishable error type", () => {
-    expect(new GeminiRequestError("quota", "safe", 429)).toBeInstanceOf(Error);
+    const error = new GeminiRequestError("quota", "safe", 429);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.publicMessage).toBe("safe");
+    expect(error.status).toBe(429);
   });
 });

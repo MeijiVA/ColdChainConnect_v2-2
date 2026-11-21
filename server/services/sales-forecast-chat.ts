@@ -9,16 +9,15 @@ type GeminiErrorCode =
   | "quota"
   | "request"
   | "network"
-  | "timeout"
-  | "empty";
+  | "timeout";
 
 export class GeminiRequestError extends Error {
   constructor(
     public readonly code: GeminiErrorCode,
-    message: string,
-    public readonly status: number,
+    public readonly publicMessage: string,
+    public readonly status?: number,
   ) {
-    super(message);
+    super(publicMessage);
     this.name = "GeminiRequestError";
   }
 }
@@ -26,7 +25,9 @@ export class GeminiRequestError extends Error {
 function requestError(status: number, body: unknown): GeminiRequestError {
   // Only inspect known structured reasons; never relay the upstream response or model name.
   const error = (
-    body as { error?: { details?: { reason?: unknown }[] } } | null
+    body as {
+      error?: { message?: unknown; details?: { reason?: unknown }[] };
+    } | null
   )?.error;
   const reasons = Array.isArray(error?.details)
     ? error.details.map((detail) => detail?.reason)
@@ -34,6 +35,9 @@ function requestError(status: number, body: unknown): GeminiRequestError {
   if (
     status === 401 ||
     status === 403 ||
+    (status === 400 &&
+      typeof error?.message === "string" &&
+      /API key not valid|API_KEY_INVALID/i.test(error.message)) ||
     reasons.some(
       (reason) => reason === "API_KEY_INVALID" || reason === "API_KEY_EXPIRED",
     )
@@ -41,33 +45,34 @@ function requestError(status: number, body: unknown): GeminiRequestError {
     return new GeminiRequestError(
       "key",
       "Gemini API key is invalid or lacks access. Check GEMINI_API_KEY and its permissions.",
-      503,
+      status,
     );
   }
   if (status === 404) {
     return new GeminiRequestError(
       "model",
       "Gemini model is unavailable. Check GEMINI_MODEL and model access for your API key.",
-      503,
+      status,
     );
   }
   if (status === 429) {
     return new GeminiRequestError(
       "quota",
       "Gemini quota or rate limit exceeded. Check your quota and billing, then try again later.",
-      429,
+      status,
     );
   }
   return new GeminiRequestError(
     "request",
     "Gemini could not process the request. Please try again; if it persists, check the model configuration.",
-    502,
+    status,
   );
 }
 
 function transportError(
   error: unknown,
   signal: AbortSignal,
+  status?: number,
 ): GeminiRequestError {
   if (
     signal.aborted ||
@@ -77,14 +82,22 @@ function transportError(
     return new GeminiRequestError(
       "timeout",
       "Gemini request timed out. Please try again.",
-      504,
+      status,
     );
   }
   return new GeminiRequestError(
     "network",
     "Could not reach Gemini. Check the server network connection and try again.",
-    502,
+    status,
   );
+}
+
+function logFailure(error: GeminiRequestError): GeminiRequestError {
+  console.error("Gemini forecast chat failed", {
+    category: error.code,
+    ...(error.status === undefined ? {} : { status: error.status }),
+  });
+  return error;
 }
 
 export function hasGeminiApiKey() {
@@ -99,7 +112,6 @@ export async function generateSalesForecastAnswer(
     throw new GeminiRequestError(
       "key",
       "Gemini is not configured. Add GEMINI_API_KEY to the server environment.",
-      503,
     );
 
   const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
@@ -155,7 +167,7 @@ export async function generateSalesForecastAnswer(
       },
     );
   } catch (error) {
-    throw transportError(error, signal);
+    throw logFailure(transportError(error, signal));
   }
 
   let body: unknown;
@@ -167,18 +179,21 @@ export async function generateSalesForecastAnswer(
       (error instanceof Error &&
         (error.name === "TimeoutError" || error.name === "AbortError"))
     ) {
-      throw transportError(error, signal);
+      throw logFailure(transportError(error, signal, response.status));
     }
-    if (!response.ok) throw requestError(response.status, null);
-    if (!(error instanceof SyntaxError)) throw transportError(error, signal);
-    throw new GeminiRequestError(
-      "request",
-      "Gemini returned an invalid response. Please try again.",
-      502,
+    if (!response.ok) throw logFailure(requestError(response.status, null));
+    if (!(error instanceof SyntaxError))
+      throw logFailure(transportError(error, signal, response.status));
+    throw logFailure(
+      new GeminiRequestError(
+        "request",
+        "Gemini returned an invalid response. Please try again.",
+        response.status,
+      ),
     );
   }
 
-  if (!response.ok) throw requestError(response.status, body);
+  if (!response.ok) throw logFailure(requestError(response.status, body));
 
   const result = body as {
     promptFeedback?: { blockReason?: unknown };
@@ -203,27 +218,14 @@ export async function generateSalesForecastAnswer(
     : "";
   if (answer) return answer;
 
-  if (
+  const reason =
     result?.promptFeedback?.blockReason ||
     candidate?.finishReason === "SAFETY" ||
     candidate?.finishReason === "RECITATION"
-  ) {
-    throw new GeminiRequestError(
-      "empty",
-      "Gemini blocked this response. Try rephrasing your question.",
-      502,
-    );
-  }
-  if (candidate?.finishReason === "MAX_TOKENS") {
-    throw new GeminiRequestError(
-      "empty",
-      "Gemini reached its output limit without an answer. Try a simpler question.",
-      502,
-    );
-  }
-  throw new GeminiRequestError(
-    "empty",
-    "Gemini returned an empty answer. Please try again or rephrase your question.",
-    502,
-  );
+      ? "blocked"
+      : candidate?.finishReason === "MAX_TOKENS"
+        ? "output_limit"
+        : "no_text";
+  console.warn("Gemini forecast chat returned no answer", { reason });
+  return null;
 }

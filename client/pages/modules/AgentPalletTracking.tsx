@@ -225,7 +225,19 @@ export function AgentPalletTracking() {
       );
     } else if (palletMatches.length === 1) {
       setScanPalletId(palletMatches[0].id);
-    } else if (orderMatches.length === 0) {
+    } else if (orderMatches.length === 1) {
+      const orderId = orderMatches[0];
+      setSearch(orderId);
+      if (
+        !pallets.some(
+          (pallet) => pallet.order_id.toLowerCase() === orderId.toLowerCase(),
+        )
+      ) {
+        setScanError(
+          `${orderBarcodeValue(orderId)} has no pallets yet. Pallets must be created in Preparation first.`,
+        );
+      }
+    } else {
       setScanError("No pallet or order matches this barcode.");
     }
   }, [bookingIds, isLoading, location.key, pallets, scanCode, trackingLoaded]);
@@ -648,17 +660,19 @@ export function AgentPalletTracking() {
       )}
 
       {filteredPallets.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border bg-card px-5 py-10 text-center">
-          <Package size={30} className="mx-auto mb-3 text-muted-foreground" />
-          <p className="font-semibold text-foreground">
-            {pallets.length ? "No matching pallets" : "No pallets yet"}
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {pallets.length
-              ? "Try another search, customer, or status filter."
-              : "Pallets for your orders will appear here."}
-          </p>
-        </div>
+        !scanError && (
+          <div className="rounded-2xl border border-dashed border-border bg-card px-5 py-10 text-center">
+            <Package size={30} className="mx-auto mb-3 text-muted-foreground" />
+            <p className="font-semibold text-foreground">
+              {pallets.length ? "No matching pallets" : "No pallets yet"}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {pallets.length
+                ? "Try another search, customer, or status filter."
+                : "Pallets for your orders will appear here."}
+            </p>
+          </div>
+        )
       ) : (
         <div className="flex flex-col gap-3">
           {filteredPallets.map((pallet) => {

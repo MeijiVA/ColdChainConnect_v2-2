@@ -3,6 +3,7 @@ import { SalesForecastChatRequestSchema } from "../../shared/api";
 import {
   GeminiRequestError,
   generateSalesForecastAnswer,
+  hasGeminiApiKey,
 } from "../services/sales-forecast-chat";
 
 export const postSalesForecastChat: RequestHandler = async (req, res) => {
@@ -13,12 +14,25 @@ export const postSalesForecastChat: RequestHandler = async (req, res) => {
       .json({ error: "Invalid sales forecast chat request" });
   }
 
+  if (!hasGeminiApiKey()) {
+    return res
+      .status(503)
+      .json({
+        error:
+          "Gemini is not configured. Add GEMINI_API_KEY to the server environment.",
+      });
+  }
+
   try {
     const answer = await generateSalesForecastAnswer(parsed.data);
+    if (!answer)
+      return res
+        .status(502)
+        .json({ error: "Gemini returned an empty answer. Please try again." });
     res.json({ answer });
   } catch (error) {
     if (error instanceof GeminiRequestError) {
-      return res.status(error.status).json({ error: error.message });
+      return res.status(502).json({ error: error.publicMessage });
     }
     return res
       .status(502)

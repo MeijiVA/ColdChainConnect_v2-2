@@ -399,13 +399,14 @@ export interface Driver {
 }
 
 export interface DriverSchedule {
-  date: string;
+  date: string | null;
   driver: { id: string; full_name: string | null };
   deliveries: DriverScheduleRun[];
 }
 
 export interface DriverScheduleRun {
   id: string;
+  scheduled_date: string | null;
   status: "pending" | "in_transit" | "completed";
   truck: { id: string; license_plate: string; district: string };
   delivery_items: DriverScheduleStop[];

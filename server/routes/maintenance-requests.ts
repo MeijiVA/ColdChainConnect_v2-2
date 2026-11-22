@@ -69,6 +69,7 @@ export const createMaintenanceRequest: RequestHandler = async (req: AuthRequest,
         id: randomUUID(),
         asset: parsed.data.asset,
         description: parsed.data.description,
+        estimated_cost: parsed.data.estimated_cost == null ? null : parsed.data.estimated_cost.toFixed(2),
         status: "submitted",
         requested_by: req.user.userId,
       })

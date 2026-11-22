@@ -618,6 +618,7 @@ export interface MaintenanceRequest {
   id: string;
   asset: string;
   description: string;
+  estimated_cost?: string | null;
   status: MaintenanceStatus;
   requested_by: string;
   reviewed_by?: string | null;
@@ -633,6 +634,7 @@ export interface MaintenanceRequest {
 export const CreateMaintenanceRequestSchema = z.object({
   asset: z.string().trim().min(1, "Asset is required").max(120, "Asset must be 120 characters or fewer"),
   description: z.string().trim().min(1, "Description is required"),
+  estimated_cost: z.number().nonnegative("Estimated cost cannot be negative").max(9_999_999_999.99, "Estimated cost is too large").nullable().optional(),
 });
 export type CreateMaintenanceRequest = z.infer<typeof CreateMaintenanceRequestSchema>;
 

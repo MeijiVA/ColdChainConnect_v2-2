@@ -13,6 +13,7 @@ interface MaintenanceRequestFormProps {
 export function MaintenanceRequestForm({ token, onSubmitted, onCancel }: MaintenanceRequestFormProps) {
   const [asset, setAsset] = useState("");
   const [description, setDescription] = useState("");
+  const [estimatedCost, setEstimatedCost] = useState("");
   const [saving, setSaving] = useState(false);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -22,7 +23,7 @@ export function MaintenanceRequestForm({ token, onSubmitted, onCancel }: Mainten
       const res = await fetch("/api/maintenance-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ asset, description }),
+        body: JSON.stringify({ asset, description, estimated_cost: estimatedCost.trim() === "" ? null : Number(estimatedCost) }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -60,6 +61,18 @@ export function MaintenanceRequestForm({ token, onSubmitted, onCancel }: Mainten
           placeholder="Describe the problem and when it started"
           onChange={(event) => setDescription(event.target.value)}
           required
+        />
+      </div>
+      <div className="space-y-1">
+        <label htmlFor="maintenance-cost" className="text-xs font-semibold text-muted-foreground">Estimated cost (optional)</label>
+        <Input
+          id="maintenance-cost"
+          type="number"
+          min="0"
+          step="0.01"
+          value={estimatedCost}
+          placeholder="0.00"
+          onChange={(event) => setEstimatedCost(event.target.value)}
         />
       </div>
       <div className="flex justify-end gap-2">

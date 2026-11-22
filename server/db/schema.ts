@@ -563,6 +563,7 @@ export const maintenance_requests = pgTable("maintenance_requests", {
   id: text("id").primaryKey(),
   asset: varchar("asset", { length: 120 }).notNull(),
   description: text("description").notNull(),
+  estimated_cost: decimal("estimated_cost", { precision: 12, scale: 2 }),
   status: varchar("status", { length: 20 }).notNull().default("submitted"),
   requested_by: text("requested_by")
     .notNull()

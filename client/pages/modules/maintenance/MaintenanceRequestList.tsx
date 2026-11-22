@@ -44,7 +44,14 @@ export function MaintenanceRequestList({ requests, canDecide, emptyMessage, onAp
                   {new Date(request.created_at).toLocaleDateString("en-PH")}
                 </td>
                 <td className="px-3 py-3 font-medium text-foreground">{request.asset}</td>
-                <td className="px-3 py-3 text-muted-foreground max-w-md whitespace-pre-line">{request.description}</td>
+                <td className="px-3 py-3 text-muted-foreground max-w-md whitespace-pre-line">
+                  {request.description}
+                  {request.estimated_cost != null && (
+                    <div className="mt-1 text-xs font-semibold text-foreground">
+                      Est. {Number(request.estimated_cost).toLocaleString("en-PH", { style: "currency", currency: "PHP" })}
+                    </div>
+                  )}
+                </td>
                 <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">{request.requested_by_name ?? "—"}</td>
                 <td className="px-3 py-3">
                   <div className="flex flex-col gap-1 items-start">

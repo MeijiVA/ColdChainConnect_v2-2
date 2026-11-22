@@ -16,6 +16,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { TruncatedText } from "@/components/ui/truncated-text";
 import { useAutoRefresh } from "@/hooks/useAutoRefresh";
+import { useSearchParams } from "react-router-dom";
+import { MaintenancePanel } from "./maintenance/MaintenancePanel";
 import { useAuth } from "@/hooks/useAuth";
 import { useCan } from "@/hooks/useCan";
 import { formatPeso, responseError } from "@/lib/format";
@@ -357,6 +359,9 @@ export function Expenses() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const canApprove = useCan("expense:approve");
   const canPay = useCan("expense:pay");
+  const canSeeMaintenance = useCan("maintenance:decide");
+  const [params, setParams] = useSearchParams();
+  const showMaintenance = canSeeMaintenance && params.get("view") === "maintenance";
 
   const fetchData = useCallback(async () => {
     if (!token) return;
@@ -404,10 +409,33 @@ export function Expenses() {
   const { currentPage, totalPages, pageItems } = paginate(filtered, page);
   const selected = expenses.find((item) => item.id === selectedId) ?? null;
 
+  const viewToggle = canSeeMaintenance ? (
+    <ToggleGroup
+      type="single"
+      value={showMaintenance ? "maintenance" : "expenses"}
+      onValueChange={(value) => { if (value) setParams(value === "maintenance" ? { view: "maintenance" } : {}); }}
+      aria-label="Switch between expenses and maintenance"
+      className="hide-scrollbar w-fit max-w-full justify-start overflow-x-auto rounded-full border border-border bg-card p-1"
+    >
+      <ToggleGroupItem value="expenses" variant="pill" size="sm">Expenses</ToggleGroupItem>
+      <ToggleGroupItem value="maintenance" variant="pill" size="sm">Maintenance</ToggleGroupItem>
+    </ToggleGroup>
+  ) : null;
+
+  if (showMaintenance) {
+    return (
+      <div className="flex flex-1 flex-col gap-6 p-6">
+        {viewToggle}
+        <MaintenancePanel />
+      </div>
+    );
+  }
+
   if (isLoading) return <LoadingSpinner />;
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-6">
+      {viewToggle}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="page-title">Expenses</h1>

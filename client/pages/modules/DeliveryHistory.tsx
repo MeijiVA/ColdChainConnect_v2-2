@@ -151,7 +151,7 @@ export function DeliveryHistory() {
             Delivery History
           </h1>
           <p className="page-subtitle">
-            Completed deliveries and their original receipts
+            Completed deliveries and their invoices
           </p>
         </div>
       </div>
@@ -172,7 +172,7 @@ export function DeliveryHistory() {
       <TableToolbar
         searchValue={search}
         onSearchChange={(value) => { setSearch(value); setPage(1); clearSelection(); }}
-        searchPlaceholder="Search by receipt #, customer, truck, or invoice…"
+        searchPlaceholder="Search by INV #, customer, truck, or invoice…"
         selectedCount={selectedReceipts.length}
         bulkActions={[{ label: "Print selected", onSelect: () => setPrinting(selectedReceipts) }]}
       >
@@ -195,9 +195,9 @@ export function DeliveryHistory() {
               <thead>
                 <tr>
                   <th className="w-10 bg-muted px-3 py-2.5">
-                    <Checkbox aria-label="Select all receipts on this page" checked={allOnPageSelected} onCheckedChange={(checked) => togglePage(checked === true)} />
+                    <Checkbox aria-label="Select all invoices on this page" checked={allOnPageSelected} onCheckedChange={(checked) => togglePage(checked === true)} />
                   </th>
-                  <SortableHeader label="Receipt #" sortKey="receipt" sort={sort} onSort={setSort} />
+                  <SortableHeader label="INV #" sortKey="receipt" sort={sort} onSort={setSort} />
                   <SortableHeader label="Customer" sortKey="customer" sort={sort} onSort={setSort} />
                   <SortableHeader label="Truck" sortKey="truck" sort={sort} onSort={setSort} className="hidden md:table-cell" />
                   <SortableHeader label="Confirmed At" sortKey="confirmed" sort={sort} onSort={setSort} className="hidden sm:table-cell" />
@@ -216,7 +216,7 @@ export function DeliveryHistory() {
                   paginated.map((r) => (
                     <tr key={r.id} className="border-b border-border hover:bg-accent/50 transition-colors">
                       <td className="px-3 py-3">
-                        <Checkbox aria-label={`Select receipt ${r.receipt_number}`} checked={selectedIds.has(r.id)} onCheckedChange={(checked) => toggleReceipt(r.id, checked === true)} />
+                        <Checkbox aria-label={`Select invoice ${r.receipt_number}`} checked={selectedIds.has(r.id)} onCheckedChange={(checked) => toggleReceipt(r.id, checked === true)} />
                       </td>
                       <td className="px-3 py-3 font-mono font-semibold">
                         <RecordTitleButton onClick={() => setViewReceipt(r)}>{r.receipt_number}</RecordTitleButton>
@@ -301,7 +301,7 @@ export function OriginalReceiptModal({ receipt, onClose, showBack = true }: { re
       `}</style>
       <div className="page-header no-print">
         <div>
-          <h1 className="page-title">Original Receipt</h1>
+          <h1 className="page-title">Invoice</h1>
         </div>
         <div className="flex gap-2">
           <Button onClick={handlePrint} variant="outline">

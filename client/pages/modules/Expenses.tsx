@@ -163,52 +163,72 @@ function NewExpenseForm({ token, onClose, onCreated }: { token: string | null; o
 
 // ─── Details and actions ──────────────────────────────────────────────────────
 
+type ExpenseAction = "approve" | "reject" | "pay";
+
+const ACTION_DONE: Record<ExpenseAction, string> = {
+  approve: "Expense approved",
+  reject: "Expense rejected",
+  pay: "Expense marked as paid",
+};
+
+// Permission, status and actor rules, mirroring the server (which still has the final say).
+function expenseRules(expense: Expense, userId: string | undefined, canApprove: boolean, canPay: boolean) {
+  return {
+    mayReview: canApprove && expense.status === "submitted" && expense.submitted_by !== userId,
+    mayPay: canPay && expense.status === "approved" && expense.approved_by !== userId,
+  };
+}
+
+async function postExpenseAction(expense: Expense, token: string | null, action: ExpenseAction, body?: unknown): Promise<boolean> {
+  const failed = "The action could not be completed";
+  try {
+    const res = await fetch(`/api/expenses/${expense.id}/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body ?? {}),
+    });
+    if (!res.ok) {
+      // 409: someone else got there first or a rule blocks it; the caller refreshes the row.
+      toast.error(await responseError(res, failed));
+      return false;
+    }
+    toast.success(ACTION_DONE[action]);
+    return true;
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : failed);
+    return false;
+  }
+}
+
 function ExpenseDetails({
   expense,
   token,
   userId,
+  initiallyRejecting,
   onClose,
   onChanged,
 }: {
   expense: Expense;
   token: string | null;
   userId: string | undefined;
+  initiallyRejecting: boolean;
   onClose: () => void;
   onChanged: () => Promise<void> | void;
 }) {
   const canApprove = useCan("expense:approve");
   const canPay = useCan("expense:pay");
-  const [rejecting, setRejecting] = useState(false);
+  const [rejecting, setRejecting] = useState(initiallyRejecting);
   const [reason, setReason] = useState("");
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { mayReview, mayPay } = expenseRules(expense, userId, canApprove, canPay);
 
-  // Permission, status and actor rules, mirroring the server (which still has the final say).
-  const mayReview = canApprove && expense.status === "submitted" && expense.submitted_by !== userId;
-  const mayPay = canPay && expense.status === "approved" && expense.approved_by !== userId;
-
-  const act = async (action: "approve" | "reject" | "pay", body?: unknown) => {
+  const act = async (action: ExpenseAction, body?: unknown) => {
     setBusy(true);
-    try {
-      const res = await fetch(`/api/expenses/${expense.id}/${action}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body ?? {}),
-      });
-      if (!res.ok) {
-        // 409: someone else got there first or a rule blocks it; show why and refresh the row.
-        toast.error(await responseError(res, "The action could not be completed"));
-        await onChanged();
-        return;
-      }
-      toast.success({ approve: "Expense approved", reject: "Expense rejected", pay: "Expense marked as paid" }[action]);
-      await onChanged();
-      onClose();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "The action could not be completed");
-    } finally {
-      setBusy(false);
-    }
+    const ok = await postExpenseAction(expense, token, action, body);
+    setBusy(false);
+    await onChanged();
+    if (ok) onClose();
   };
 
   const confirmReject = () => {
@@ -280,6 +300,42 @@ function ExpenseDetails({
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
+function ExpenseRowActions({
+  expense,
+  userId,
+  canApprove,
+  canPay,
+  busy,
+  onAction,
+  onReject,
+  onDetails,
+}: {
+  expense: Expense;
+  userId: string | undefined;
+  canApprove: boolean;
+  canPay: boolean;
+  busy: boolean;
+  onAction: (action: ExpenseAction) => void;
+  onReject: () => void;
+  onDetails: () => void;
+}) {
+  const { mayReview, mayPay } = expenseRules(expense, userId, canApprove, canPay);
+  return (
+    <div className="flex flex-wrap justify-end gap-1.5">
+      {mayReview && (
+        <Button variant="success" size="sm" disabled={busy} onClick={() => onAction("approve")}>Approve</Button>
+      )}
+      {mayReview && (
+        <Button variant="danger" size="sm" disabled={busy} onClick={onReject}>Reject</Button>
+      )}
+      {mayPay && (
+        <Button size="sm" disabled={busy} onClick={() => onAction("pay")}>Mark paid</Button>
+      )}
+      <Button variant="outline" size="sm" onClick={onDetails}>Details</Button>
+    </div>
+  );
+}
+
 const FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "all", label: "All" },
   ...expenseStatuses.map((status) => ({ key: status, label: status[0].toUpperCase() + status.slice(1) })),
@@ -297,6 +353,10 @@ export function Expenses() {
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [startRejecting, setStartRejecting] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const canApprove = useCan("expense:approve");
+  const canPay = useCan("expense:pay");
 
   const fetchData = useCallback(async () => {
     if (!token) return;
@@ -319,6 +379,18 @@ export function Expenses() {
   useAutoRefresh(fetchData, { enabled: Boolean(token) });
 
   const countFor = (key: StatusFilter) => (key === "all" ? expenses.length : expenses.filter((item) => item.status === key).length);
+
+  const runRowAction = async (item: Expense, action: ExpenseAction) => {
+    setBusyId(item.id);
+    await postExpenseAction(item, token, action);
+    setBusyId(null);
+    await fetchData();
+  };
+
+  const openDetails = (id: string, rejecting: boolean) => {
+    setStartRejecting(rejecting);
+    setSelectedId(id);
+  };
 
   const query = searchTerm.trim().toLowerCase();
   const filtered = newestFirst(
@@ -413,7 +485,16 @@ export function Expenses() {
                   <TableCell><StatusBadge label={item.status} tone={STATUS_TONE[item.status]} /></TableCell>
                   <TableCell className="text-sm text-muted-foreground">{item.submitted_by_name || "—"}</TableCell>
                   <TableCell className="text-right">
-                    <Button variant="outline" size="sm" onClick={() => setSelectedId(item.id)}>Details</Button>
+                    <ExpenseRowActions
+                      expense={item}
+                      userId={user?.id}
+                      canApprove={canApprove}
+                      canPay={canPay}
+                      busy={busyId === item.id}
+                      onAction={(action) => void runRowAction(item, action)}
+                      onReject={() => openDetails(item.id, true)}
+                      onDetails={() => openDetails(item.id, false)}
+                    />
                   </TableCell>
                 </TableRow>
               ))
@@ -434,6 +515,7 @@ export function Expenses() {
             expense={selected}
             token={token}
             userId={user?.id}
+            initiallyRejecting={startRejecting}
             onClose={() => setSelectedId(null)}
             onChanged={fetchData}
           />

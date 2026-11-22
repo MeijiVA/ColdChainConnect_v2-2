@@ -141,7 +141,7 @@ export function AgentDeliverySchedule() {
   } | null>(null);
   const [showUnconfirmed, setShowUnconfirmed] = useState(false);
   const [myCashPayments, setMyCashPayments] = useState<MyCashPayment[]>([]);
-  const [showPartiallyUnpaid, setShowPartiallyUnpaid] = useState(false);
+  const [showPaymentHistory, setShowPaymentHistory] = useState(false);
 
   const fetchSchedule = async () => {
     if (!token) return;
@@ -258,17 +258,30 @@ export function AgentDeliverySchedule() {
     0,
   );
 
-  const partiallyUnpaidStops = deliveries.flatMap((delivery) =>
-    (delivery.delivery_items ?? [])
-      .filter(
-        (stop) =>
-          stop.status === "completed" &&
-          !stop.is_paid &&
-          (stop.outstanding_amount ?? 0) > 0,
-      )
-      .map((stop) => ({ delivery, stop })),
-  );
-  const partiallyUnpaidTotal = partiallyUnpaidStops.reduce(
+  const paymentHistoryStops = deliveries
+    .flatMap((delivery) =>
+      (delivery.delivery_items ?? [])
+        .filter(
+          (stop) =>
+            stop.status === "completed" &&
+            !stop.is_paid &&
+            (stop.outstanding_amount ?? 0) > 0,
+        )
+        .map((stop) => {
+          const amountDue =
+            Number(stop.invoice?.total_amount ?? 0) -
+            Number(stop.invoice?.credit_applied_amount ?? 0);
+          return {
+            delivery,
+            stop,
+            isPartiallyPaid: (stop.outstanding_amount ?? 0) < amountDue,
+          };
+        }),
+    )
+    .sort((a, b) =>
+      (b.delivery.scheduled_date ?? "").localeCompare(a.delivery.scheduled_date ?? ""),
+    );
+  const paymentHistoryTotal = paymentHistoryStops.reduce(
     (total, { stop }) => total + (stop.outstanding_amount ?? 0),
     0,
   );
@@ -370,6 +383,14 @@ export function AgentDeliverySchedule() {
               Your assigned delivery runs, destinations, and stop details
             </p>
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-10"
+            onClick={() => setShowPaymentHistory(true)}
+          >
+            Partially paid &amp; unpaid ({paymentHistoryStops.length})
+          </Button>
         </div>
 
         <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -418,70 +439,6 @@ export function AgentDeliverySchedule() {
                     <span className="text-sm font-semibold text-foreground">
                       {formatPeso(Number(payment.amount))}
                     </span>
-                  </li>
-                ))}
-              </ul>
-            ))}
-        </section>
-
-        <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
-          <button
-            type="button"
-            aria-expanded={showPartiallyUnpaid}
-            onClick={() => setShowPartiallyUnpaid((shown) => !shown)}
-            className="flex w-full items-center justify-between gap-2 text-left"
-          >
-            <span className="text-sm font-bold text-foreground">
-              Partially unpaid
-            </span>
-            <span className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="font-semibold text-foreground">
-                {formatPeso(partiallyUnpaidTotal)}
-              </span>
-              · {partiallyUnpaidStops.length} stops
-              {showPartiallyUnpaid ? (
-                <ChevronUp size={16} />
-              ) : (
-                <ChevronDown size={16} />
-              )}
-            </span>
-          </button>
-          {showPartiallyUnpaid &&
-            (partiallyUnpaidStops.length === 0 ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                No partially unpaid deliveries.
-              </p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {partiallyUnpaidStops.map(({ delivery, stop }) => (
-                  <li
-                    key={stop.id}
-                    className="flex flex-wrap items-center justify-between gap-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-foreground">
-                        {stop.destination_customer?.store_name ?? "Customer"}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Order {stop.invoice?.booking_id?.slice(0, 8).toUpperCase() ?? "—"}
-                        {stop.invoice?.receipt_number
-                          ? ` · Invoice ${stop.invoice.receipt_number}`
-                          : ""}
-                        {" · "}
-                        {formatPeso(stop.outstanding_amount ?? 0)} remaining
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="success"
-                      className="min-h-10"
-                      disabled={confirmingStopId === stop.id}
-                      onClick={() =>
-                        setPaymentStop({ delivery, stop, mode: "payment" })
-                      }
-                    >
-                      Record payment
-                    </Button>
                   </li>
                 ))}
               </ul>
@@ -723,6 +680,68 @@ export function AgentDeliverySchedule() {
           </div>
         )}
       </div>
+
+      {showPaymentHistory && (
+        <PageDialog
+          label="Partially paid and unpaid"
+          onClose={() => setShowPaymentHistory(false)}
+        >
+          <div className="flex flex-col gap-4 p-5">
+            <div>
+              <h2 className="text-lg font-bold text-foreground">
+                Partially paid &amp; unpaid
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {formatPeso(paymentHistoryTotal)} remaining across{" "}
+                {paymentHistoryStops.length}{" "}
+                {paymentHistoryStops.length === 1 ? "delivery" : "deliveries"}
+              </p>
+            </div>
+            {paymentHistoryStops.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No partially paid or unpaid deliveries.
+              </p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {paymentHistoryStops.map(({ delivery, stop, isPartiallyPaid }) => (
+                  <li
+                    key={stop.id}
+                    className="flex flex-wrap items-center justify-between gap-3 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-foreground">
+                        {stop.destination_customer?.store_name ?? "Customer"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {delivery.scheduled_date ?? "No date"} · Order{" "}
+                        {stop.invoice?.booking_id?.slice(0, 8).toUpperCase() ?? "—"}
+                        {stop.invoice?.receipt_number
+                          ? ` · Invoice ${stop.invoice.receipt_number}`
+                          : ""}
+                        {" · "}
+                        {isPartiallyPaid ? "Partially paid" : "Unpaid"} ·{" "}
+                        {formatPeso(stop.outstanding_amount ?? 0)} remaining
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="success"
+                      className="min-h-10"
+                      disabled={confirmingStopId === stop.id}
+                      onClick={() => {
+                        setShowPaymentHistory(false);
+                        setPaymentStop({ delivery, stop, mode: "payment" });
+                      }}
+                    >
+                      Record payment
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </PageDialog>
+      )}
 
       {paymentStop && (
         <PageDialog onClose={() => setPaymentStop(null)}>

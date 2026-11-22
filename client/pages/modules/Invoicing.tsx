@@ -15,7 +15,8 @@ import {
 import { Printer, Calendar, ArrowLeft } from "lucide-react";
 import { useAutoRefresh } from "@/hooks/useAutoRefresh";
 import { RecordTitleButton } from "@/components/RecordTitleButton";
-import { TableFilterSelect, TableToolbar } from "@/components/TableToolbar";
+import { TableFilterSelect, TableToolbar, type TableBulkAction } from "@/components/TableToolbar";
+import { Checkbox } from "@/components/ui/checkbox";
 import { newestFirst } from "@/components/SortableHeader";
 import { TablePagination, paginate } from "@/components/TablePagination";
 import { Invoice, InvoiceItem, BookingItem } from "@shared/api";
@@ -283,10 +284,21 @@ export function Invoicing() {
   const [customDateEnd, setCustomDateEnd] = useState("");
   const [receiptInvoice, setReceiptInvoice] = useState<Invoice | null>(null);
   const [page, setPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkPrint, setBulkPrint] = useState<Invoice[] | null>(null);
 
   useEffect(() => {
     setPage(1);
+    setSelectedIds(new Set());
   }, [searchTerm, statusFilter, paymentFilter, dateRangeFilter, customDateStart, customDateEnd]);
+
+  useEffect(() => {
+    if (!bulkPrint) return;
+    const clearBulkPrint = () => setBulkPrint(null);
+    window.addEventListener("afterprint", clearBulkPrint, { once: true });
+    window.print();
+    return () => window.removeEventListener("afterprint", clearBulkPrint);
+  }, [bulkPrint]);
 
   const fetchInvoices = async () => {
     try {
@@ -351,6 +363,8 @@ export function Invoicing() {
 
   const { currentPage, totalPages, pageItems: paginated } = paginate(filtered, page);
   const printInvoices = invoices.filter((invoice) => localScheduleDate(new Date(invoice.created_at)) === printDate);
+  const selectedInvoices = filtered.filter((invoice) => selectedIds.has(invoice.id));
+  const bulkActions: TableBulkAction[] = [{ label: "Print selected", onSelect: () => setBulkPrint(selectedInvoices) }];
 
   return (
     <div className="flex-1 flex flex-col p-6 gap-6">
@@ -379,6 +393,8 @@ export function Invoicing() {
       )}
 
       <TableToolbar
+        selectedCount={selectedInvoices.length}
+        bulkActions={isAdmin ? bulkActions : undefined}
         searchValue={searchTerm}
         onSearchChange={setSearchTerm}
         searchPlaceholder="Search by invoice ID, booking ID, or customer…"
@@ -429,6 +445,22 @@ export function Invoicing() {
         <Table>
           <TableHeader>
             <TableRow>
+              {isAdmin && (
+                <TableHead className="w-10">
+                  <Checkbox
+                    aria-label="Select all receipts on this page"
+                    checked={paginated.length > 0 && paginated.every((inv) => selectedIds.has(inv.id))}
+                    onCheckedChange={(checked) => setSelectedIds((current) => {
+                      const next = new Set(current);
+                      for (const inv of paginated) {
+                        if (checked) next.add(inv.id);
+                        else next.delete(inv.id);
+                      }
+                      return next;
+                    })}
+                  />
+                </TableHead>
+              )}
               <TableHead>Receipt No.</TableHead>
               <TableHead>Order / Booking</TableHead>
               <TableHead>Customer</TableHead>
@@ -444,7 +476,7 @@ export function Invoicing() {
           <TableBody>
             {paginated.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={isAdmin ? 11 : 10} className="text-center py-8 text-muted-foreground">
                   {invoices.length === 0 ? "No invoices found" : "No invoices match your search"}
                 </TableCell>
               </TableRow>
@@ -465,6 +497,20 @@ export function Invoicing() {
                   n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 return (
                   <TableRow key={inv.id} className={isNewRow(inv.created_at) ? "row-new" : undefined}>
+                    {isAdmin && (
+                      <TableCell>
+                        <Checkbox
+                          aria-label={`Select receipt ${inv.receipt_number || inv.id.slice(0, 8).toUpperCase()}`}
+                          checked={selectedIds.has(inv.id)}
+                          onCheckedChange={(checked) => setSelectedIds((current) => {
+                            const next = new Set(current);
+                            if (checked) next.add(inv.id);
+                            else next.delete(inv.id);
+                            return next;
+                          })}
+                        />
+                      </TableCell>
+                    )}
                     <TableCell className="font-mono text-sm font-semibold">
                       <RecordTitleButton onClick={() => setReceiptInvoice(inv)}>
                         {inv.receipt_number || inv.id.slice(0, 8).toUpperCase()}
@@ -538,7 +584,7 @@ export function Invoicing() {
 
       {isAdmin && (
         <div className="hidden receipt-bulk-print" aria-hidden="true">
-          {printInvoices.map((invoice) => <ReceiptModal key={invoice.id} invoice={invoice} printOnly />)}
+          {(bulkPrint ?? printInvoices).map((invoice) => <ReceiptModal key={invoice.id} invoice={invoice} printOnly />)}
         </div>
       )}
     </div>

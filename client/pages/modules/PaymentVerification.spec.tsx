@@ -78,7 +78,7 @@ describe("PaymentVerification", () => {
     expect(row.textContent).toContain("₱250.00");
     expect(row.textContent).toContain("Dave Driver");
     expect(within(row).getByRole("link", { name: /OR-0001 · INV-0001/ }).getAttribute("href")).toBe("/accounting/payments/pay-1/receipt");
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/payments/unverified");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/payments/unverified?status=all");
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer tok");
   });
 
@@ -168,7 +168,7 @@ describe("PaymentVerification", () => {
     await waitFor(() => expect(verifyCalls()).toHaveLength(1));
     expect(verifyCalls()[0][0]).toBe("/api/payments/pay-1/verify");
     expect(verifyCalls()[0][1].headers.Authorization).toBe("Bearer tok");
-    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === "/api/payments/unverified").length).toBeGreaterThan(1));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === "/api/payments/unverified?status=all").length).toBeGreaterThan(1));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(toast.success).toHaveBeenCalled();
   });

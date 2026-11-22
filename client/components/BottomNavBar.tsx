@@ -44,7 +44,7 @@ const hubModulesByPath: Record<string, Array<{ path: string; label: string; icon
     { path: "/delivery", label: "Truck Dispatch", icon: Truck },
     { path: "/accounts", label: "Accounts Receivable", icon: Wallet },
     { path: "/delivery-history", label: "Delivery History", icon: History },
-    { path: "/agent-returns", label: "Returns", icon: RotateCcw },
+    { path: "/agent-returns", label: "Returns and Maintenance", icon: RotateCcw },
   ],
   "/accounting": [
     { path: "/payments", label: "End-of-Day", icon: BadgeCheck },

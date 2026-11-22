@@ -28,6 +28,19 @@ const formatDate = (value: string) => new Date(value).toLocaleDateString("en-PH"
 const paymentAgentId = (payment: UnverifiedPayment) =>
   payment.agent_user_id ?? (payment.recorded_by_role === "agent" ? payment.recorded_by : null);
 const businessDate = (value: string) => new Date(new Date(value).getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const isVerified = (payment: UnverifiedPayment) => Boolean(payment.verified_at);
+
+type PaymentTab = "ongoing" | "accomplished" | "all";
+const PAYMENT_TABS: { value: PaymentTab; label: string }[] = [
+  { value: "ongoing", label: "Ongoing" },
+  { value: "accomplished", label: "Accomplished" },
+  { value: "all", label: "All" },
+];
+const EMPTY_TEXT: Record<PaymentTab, string> = {
+  ongoing: "No payments are waiting to be verified.",
+  accomplished: "No payments have been verified yet.",
+  all: "No payments have been recorded yet.",
+};
 
 function PaymentPrintSheet({ payments, periodText }: { payments: UnverifiedPayment[]; periodText: string }) {
   const total = payments.reduce((sum, payment) => sum + Number(payment.amount), 0);
@@ -166,6 +179,7 @@ export function PaymentVerification() {
   const bounds = periodBounds(period, today);
   const [searchTerm, setSearchTerm] = useState("");
   const [agentFilter, setAgentFilter] = useState("all");
+  const [tab, setTab] = useState<PaymentTab>("ongoing");
   const [page, setPage] = useState(1);
   const [verifying, setVerifying] = useState<UnverifiedPayment | null>(null);
   const [bulkTarget, setBulkTarget] = useState<UnverifiedPayment[] | null>(null);
@@ -177,7 +191,7 @@ export function PaymentVerification() {
     try {
       const headers = { Authorization: `Bearer ${token}` };
       const [res, agentsRes] = await Promise.all([
-        fetch("/api/payments/unverified", { headers }),
+        fetch("/api/payments/unverified?status=all", { headers }),
         fetch("/api/payments/agents", { headers }),
       ]);
       if (!res.ok) throw new Error(await responseError(res, "Failed to load payments"));
@@ -224,8 +238,20 @@ export function PaymentVerification() {
     else nextParams.set("period", value);
     setSearchParams(nextParams, { replace: true });
   };
+  const tabCounts: Record<PaymentTab, number> = {
+    ongoing: payments.filter((payment) => !isVerified(payment)).length,
+    accomplished: payments.filter(isVerified).length,
+    all: payments.length,
+  };
+  const changeTab = (value: PaymentTab) => {
+    setTab(value);
+    setPage(1);
+    setSelectedIds(new Set());
+  };
   const query = searchTerm.trim().toLowerCase();
   const filtered = payments.filter((payment) => {
+    if (tab === "ongoing" && isVerified(payment)) return false;
+    if (tab === "accomplished" && !isVerified(payment)) return false;
     const day = businessDate(payment.confirmed_at);
     if (bounds && (day < bounds.from || day > bounds.to)) return false;
     if (agentFilter !== "all" && paymentAgentId(payment) !== agentFilter && payment.recorded_by !== agentFilter) return false;
@@ -237,9 +263,10 @@ export function PaymentVerification() {
   const totalAmount = filtered.reduce((sum, payment) => sum + Number(payment.amount), 0);
   const cashAmount = filtered.filter((payment) => payment.payment_method === "cash").reduce((sum, payment) => sum + Number(payment.amount), 0);
   const agentCount = new Set(filtered.map(paymentAgentId).filter(Boolean)).size;
-  const selectedPayments = filtered.filter((payment) => selectedIds.has(payment.id));
+  const selectablePageItems = pageItems.filter((payment) => !isVerified(payment));
+  const selectedPayments = filtered.filter((payment) => selectedIds.has(payment.id) && !isVerified(payment));
   const bulkActions: TableBulkAction[] = [
-    ...(canVerify ? [{ label: "Verify selected", onSelect: () => setBulkTarget(selectedPayments) }] : []),
+    ...(canVerify && tab !== "accomplished" ? [{ label: "Verify selected", onSelect: () => setBulkTarget(selectedPayments) }] : []),
     { label: "Print selected", onSelect: () => setPrintTarget(selectedPayments) },
   ];
   if (isLoading) return <LoadingSpinner />;
@@ -249,7 +276,7 @@ export function PaymentVerification() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="page-title">End-of-Day</h1>
-          <p className="page-subtitle">Payments drivers and agents recorded on deliveries, waiting for Accounting</p>
+          <p className="page-subtitle">Payments drivers and agents recorded on deliveries, and whether Accounting has verified them</p>
         </div>
         <div className="no-print flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" onClick={() => setPrintTarget(filtered)} disabled={filtered.length === 0}>
@@ -265,8 +292,8 @@ export function PaymentVerification() {
       )}
 
       <div className="no-print grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Card className="p-4"><div className="text-2xl font-bold">{formatPeso(totalAmount)}</div><p className="mt-1 text-xs font-semibold text-muted-foreground">Total to verify</p></Card>
-        <Card className="p-4"><div className="text-2xl font-bold">{filtered.length}</div><p className="mt-1 text-xs font-semibold text-muted-foreground">Pending payments</p></Card>
+        <Card className="p-4"><div className="text-2xl font-bold">{formatPeso(totalAmount)}</div><p className="mt-1 text-xs font-semibold text-muted-foreground">Total</p></Card>
+        <Card className="p-4"><div className="text-2xl font-bold">{filtered.length}</div><p className="mt-1 text-xs font-semibold text-muted-foreground">Payments</p></Card>
         <Card className="p-4"><div className="text-2xl font-bold">{formatPeso(cashAmount)}</div><p className="mt-1 text-xs font-semibold text-muted-foreground">Cash payments</p></Card>
         <Card className="p-4"><div className="text-2xl font-bold">{agentCount}</div><p className="mt-1 text-xs font-semibold text-muted-foreground">Agents</p></Card>
       </div>
@@ -279,6 +306,22 @@ export function PaymentVerification() {
           selectedCount={selectedPayments.length}
           bulkActions={bulkActions}
         >
+          <div role="group" aria-label="Filter payments by status" className="inline-flex rounded-full border border-border bg-muted p-1">
+            {PAYMENT_TABS.map((option) => {
+              const active = tab === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => changeTab(option.value)}
+                  className={`rounded-full px-3.5 py-1 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  {option.label} <span className="ml-1 text-xs font-medium text-muted-foreground">{tabCounts[option.value]}</span>
+                </button>
+              );
+            })}
+          </div>
           <NativeSelect aria-label="Filter by agent" value={agentFilter} onChange={(event) => { setAgentFilter(event.target.value); setPage(1); setSelectedIds(new Set()); }}>
             <option value="all">All agents</option>
             {agentOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
@@ -294,10 +337,10 @@ export function PaymentVerification() {
               <TableHead>
                 <Checkbox
                   aria-label="Select all payments on this page"
-                  checked={pageItems.length > 0 && pageItems.every((payment) => selectedIds.has(payment.id))}
+                  checked={selectablePageItems.length > 0 && selectablePageItems.every((payment) => selectedIds.has(payment.id))}
                   onCheckedChange={(checked) => setSelectedIds((current) => {
                     const next = new Set(current);
-                    for (const payment of pageItems) {
+                    for (const payment of selectablePageItems) {
                       if (checked) next.add(payment.id);
                       else next.delete(payment.id);
                     }
@@ -318,23 +361,25 @@ export function PaymentVerification() {
             {pageItems.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={canVerify ? 8 : 7} className="py-10 text-center text-sm text-muted-foreground">
-                  {payments.length === 0 ? "No payments are waiting to be verified." : "No payments match the selected filters."}
+                  {tabCounts[tab] === 0 ? EMPTY_TEXT[tab] : "No payments match the selected filters."}
                 </TableCell>
               </TableRow>
             ) : (
               pageItems.map((payment) => (
                 <TableRow key={payment.id} className={isNewRow(payment.confirmed_at) ? "row-new" : undefined}>
                   <TableCell>
-                    <Checkbox
-                      aria-label={`Select payment ${payment.receipt_number}`}
-                      checked={selectedIds.has(payment.id)}
-                      onCheckedChange={(checked) => setSelectedIds((current) => {
-                        const next = new Set(current);
-                        if (checked) next.add(payment.id);
-                        else next.delete(payment.id);
-                        return next;
-                      })}
-                    />
+                    {!isVerified(payment) && (
+                      <Checkbox
+                        aria-label={`Select payment ${payment.receipt_number}`}
+                        checked={selectedIds.has(payment.id)}
+                        onCheckedChange={(checked) => setSelectedIds((current) => {
+                          const next = new Set(current);
+                          if (checked) next.add(payment.id);
+                          else next.delete(payment.id);
+                          return next;
+                        })}
+                      />
+                    )}
                   </TableCell>
                   <TableCell className="max-w-[220px] text-sm font-semibold text-foreground">
                     <TruncatedText>{payment.customer_name}</TruncatedText>
@@ -352,12 +397,17 @@ export function PaymentVerification() {
                       <span className="block text-xs">Agent: {payment.agent_name}</span>
                     )}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(payment.confirmed_at)}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                    {formatDate(payment.confirmed_at)}
+                    {payment.verified_at && <span className="block">Verified {formatDate(payment.verified_at)}</span>}
+                  </TableCell>
                   {canVerify && (
                     <TableCell className="text-right">
-                      <Button variant="success" size="sm" onClick={() => setVerifying(payment)}>
-                        <BadgeCheck size={13} /> Verify
-                      </Button>
+                      {!isVerified(payment) && (
+                        <Button variant="success" size="sm" onClick={() => setVerifying(payment)}>
+                          <BadgeCheck size={13} /> Verify
+                        </Button>
+                      )}
                     </TableCell>
                   )}
                 </TableRow>

@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import { useCan } from "@/hooks/useCan";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
@@ -12,6 +13,7 @@ import { useAutoRefresh } from "@/hooks/useAutoRefresh";
 import { RotateCcw, CheckCircle, XCircle } from "lucide-react";
 import { AgentReturn, AgentScheduleResponse, Invoice, Customer, Product } from "@shared/api";
 import { LogReturnForm } from "./LogReturnForm";
+import { MaintenancePanel } from "./maintenance/MaintenancePanel";
 import { Table } from "@/components/ui/table";
 import { newestFirst } from "@/components/SortableHeader";
 import { TableBulkAction, TableToolbar } from "@/components/TableToolbar";
@@ -200,7 +202,7 @@ function OrderInfo({ invoiceId, invoice, customerName, returns, onClose }: { inv
   );
 }
 
-export function AgentReports() {
+function ReturnsView() {
   const { token, user } = useAuth();
   const role = user?.role;
   const isAgent = role === "agent";
@@ -389,19 +391,6 @@ export function AgentReports() {
       </div>
 
       <div className="flex flex-col gap-3">
-        <ToggleGroup
-          type="single"
-          value={statusFilter}
-          onValueChange={(value) => { if (value) { setStatusFilter(value as typeof statusFilter); setPage(1); } }}
-          aria-label="Filter returns by status"
-          className="hide-scrollbar w-fit max-w-full justify-start overflow-x-auto rounded-full border border-border bg-card p-1"
-        >
-          {(["all", "pending", "accepted", "rejected"] as const).map((s) => (
-            <ToggleGroupItem key={s} value={s} variant="pill" size="sm" className="capitalize">
-              {s}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
         <TableToolbar
           selectedCount={selectedIds.length}
           bulkActions={bulkActions}
@@ -409,6 +398,19 @@ export function AgentReports() {
           onSearchChange={(value) => { setSearchTerm(value); setPage(1); }}
           searchPlaceholder="Search order, customer, product…"
         >
+          <ToggleGroup
+            type="single"
+            value={statusFilter}
+            onValueChange={(value) => { if (value) { setStatusFilter(value as typeof statusFilter); setPage(1); } }}
+            aria-label="Filter returns by status"
+            className="hide-scrollbar w-fit max-w-full justify-start overflow-x-auto rounded-full border border-border bg-card p-1"
+          >
+            {(["all", "pending", "accepted", "rejected"] as const).map((s) => (
+              <ToggleGroupItem key={s} value={s} variant="pill" size="sm" className="capitalize">
+                {s}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           <input type="date" aria-label="Logged on date" title="Show returns logged on this date" value={dateFilter} onChange={(event) => { setDateFilter(event.target.value); setPage(1); }} className="rounded-full border border-border bg-card px-3 py-2 text-sm text-foreground focus:border-accent-2 focus:outline-none" />
         </TableToolbar>
       </div>
@@ -550,5 +552,31 @@ export function AgentReports() {
         </PageDialog>
       )}
     </>
+  );
+}
+
+export function AgentReports() {
+  const canRequestMaintenance = useCan("maintenance:request");
+  const [params, setParams] = useSearchParams();
+  const showMaintenance = canRequestMaintenance && params.get("view") === "maintenance";
+
+  if (!canRequestMaintenance) return <ReturnsView />;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="px-4 pt-4 md:px-6 lg:px-7">
+        <ToggleGroup
+          type="single"
+          value={showMaintenance ? "maintenance" : "returns"}
+          onValueChange={(value) => { if (value) setParams(value === "maintenance" ? { view: "maintenance" } : {}); }}
+          aria-label="Switch between returns and maintenance"
+          className="hide-scrollbar w-fit max-w-full justify-start overflow-x-auto rounded-full border border-border bg-card p-1"
+        >
+          <ToggleGroupItem value="returns" variant="pill" size="sm">Returns</ToggleGroupItem>
+          <ToggleGroupItem value="maintenance" variant="pill" size="sm">Maintenance</ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      {showMaintenance ? <MaintenancePanel /> : <ReturnsView />}
+    </div>
   );
 }

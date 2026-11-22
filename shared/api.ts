@@ -611,11 +611,40 @@ export interface ExpensesResponse {
   expenses: Expense[];
 }
 
+export const maintenanceStatuses = ["submitted", "approved", "rejected"] as const;
+export type MaintenanceStatus = (typeof maintenanceStatuses)[number];
+
+export interface MaintenanceRequest {
+  id: string;
+  asset: string;
+  description: string;
+  status: MaintenanceStatus;
+  requested_by: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  reject_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Username, present on list responses. */
+  requested_by_name?: string | null;
+  reviewed_by_name?: string | null;
+}
+
+export const CreateMaintenanceRequestSchema = z.object({
+  asset: z.string().trim().min(1, "Asset is required").max(120, "Asset must be 120 characters or fewer"),
+  description: z.string().trim().min(1, "Description is required"),
+});
+export type CreateMaintenanceRequest = z.infer<typeof CreateMaintenanceRequestSchema>;
+
+export interface MaintenanceRequestsResponse {
+  requests: MaintenanceRequest[];
+}
+
 export interface ExpenseResponse {
   expense: Expense;
 }
 
-/** One row of GET /api/payments/unverified: a collected payment awaiting Accounting. */
+/** One row of GET /api/payments/unverified: a collected payment, awaiting or already past Accounting. */
 export interface UnverifiedPayment {
   id: string;
   receipt_id: string;
@@ -624,6 +653,8 @@ export interface UnverifiedPayment {
   customer_id: string;
   invoice_id: string;
   confirmed_at: string;
+  /** Set once Accounting has verified the payment. */
+  verified_at?: string | null;
   customer_name: string;
   invoice_receipt_number: string;
   payment_method: string | null;

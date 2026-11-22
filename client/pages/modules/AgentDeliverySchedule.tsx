@@ -243,15 +243,18 @@ export function AgentDeliverySchedule() {
       );
   }, [view, visibleDeliveries]);
 
-  useEffect(() => {
+  const fetchUnconfirmedPayments = async () => {
     if (!token) return;
-    fetch("/api/cash-remittances/mine", {
+    const response = await fetch("/api/cash-remittances/mine", {
       headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((response) => (response.ok ? response.json() : []))
-      .then((payments: MyCashPayment[]) => setMyCashPayments(payments))
-      .catch(() => setMyCashPayments([]));
+    });
+    if (response.ok) setMyCashPayments(await response.json() as MyCashPayment[]);
+  };
+
+  useEffect(() => {
+    void fetchUnconfirmedPayments().catch(() => {});
   }, [token, showUnconfirmed]);
+  useAutoRefresh(fetchUnconfirmedPayments, { enabled: Boolean(token) });
 
   const unconfirmedTotal = myCashPayments.reduce(
     (total, payment) => total + Number(payment.amount),
@@ -332,6 +335,7 @@ export function AgentDeliverySchedule() {
       }
       setPaymentStop(null);
       await fetchSchedule();
+      void fetchUnconfirmedPayments().catch(() => {});
     } catch (confirmError) {
       setError(
         confirmError instanceof Error
@@ -419,7 +423,7 @@ export function AgentDeliverySchedule() {
           {showUnconfirmed &&
             (myCashPayments.length === 0 ? (
               <p className="mt-2 text-xs text-muted-foreground">
-                No cash waiting to be handed over.
+                No cash payments awaiting Accounting verification.
               </p>
             ) : (
               <ul className="divide-y divide-border">

@@ -126,6 +126,12 @@ import { requireAnyPermission, requirePermission, staffModuleGuard } from "./mid
 import { getPaymentReceipt, listPaymentAgents, listUnverifiedPayments, verifyReceiptPayment } from "./routes/payment-verification";
 import { createCashRemittance, listCashCollections } from "./routes/cash-remittances";
 import { approveExpense, createExpense, listExpenses, payExpense, rejectExpense } from "./routes/expenses";
+import {
+  approveMaintenanceRequest,
+  createMaintenanceRequest,
+  listMaintenanceRequests,
+  rejectMaintenanceRequest,
+} from "./routes/maintenance-requests";
 
 export function createServer() {
   const app = express();
@@ -295,6 +301,11 @@ export function createServer() {
   app.post("/api/agent-returns", authMiddleware, createAgentReturn);
   app.post("/api/agent-returns/:id/accept", authMiddleware, requireRole("admin"), acceptAgentReturn);
   app.post("/api/agent-returns/:id/reject", authMiddleware, requireRole("admin"), rejectAgentReturn);
+
+  app.get("/api/maintenance-requests", authMiddleware, requireAnyPermission("maintenance:request", "maintenance:decide"), listMaintenanceRequests);
+  app.post("/api/maintenance-requests", authMiddleware, requirePermission("maintenance:request"), createMaintenanceRequest);
+  app.post("/api/maintenance-requests/:id/approve", authMiddleware, requirePermission("maintenance:decide"), approveMaintenanceRequest);
+  app.post("/api/maintenance-requests/:id/reject", authMiddleware, requirePermission("maintenance:decide"), rejectMaintenanceRequest);
 
   // Inventory Batch routes
   app.get("/api/inventory-batches", authMiddleware, listInventoryBatches);

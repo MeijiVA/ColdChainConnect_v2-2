@@ -11,6 +11,8 @@ export type Action =
   | "expense:approve"
   | "expense:pay"
   | "delivery:confirm"
+  | "maintenance:request"
+  | "maintenance:decide"
   // Pallets: mirror the server rules on /api/pallets (create is open to order-fulfillment staff; status and approve to admin and agent; delete to admin).
   | "pallet:create"
   | "pallet:updateStatus"
@@ -49,6 +51,8 @@ const ACTION_RULES: Record<Action, Rule> = {
   "expense:approve": { roles: ["admin"] },
   "expense:pay": { roles: ["admin", "staff"], staffModules: ["accounting"] },
   "delivery:confirm": { roles: ["admin", "agent", "driver"] },
+  "maintenance:request": { roles: ["admin", "agent", "driver"] },
+  "maintenance:decide": { roles: ["admin"] },
   "pallet:create": { roles: ["admin", "agent", "staff"], staffModules: ["order-fulfillment"] },
   "pallet:updateStatus": { roles: ["admin", "agent"] },
   "pallet:delete": { roles: ["admin"] },

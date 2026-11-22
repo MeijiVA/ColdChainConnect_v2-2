@@ -292,24 +292,6 @@ export function AccountsReceivable() {
       </div>
 
       <div className="flex flex-col gap-3">
-        <ToggleGroup
-          type="single"
-          value={activeTab}
-          onValueChange={(value) => { if (value) { setActiveTab(value as typeof activeTab); setSearchTerm(""); setSelectedIds([]); setPage(1); } }}
-          aria-label="Filter receivables"
-          className="hide-scrollbar w-fit max-w-full justify-start overflow-x-auto rounded-full border border-border bg-card p-1"
-        >
-          {TABS.map((tab) => (
-            <ToggleGroupItem key={tab.key} value={tab.key} variant="pill" size="sm" className="gap-1.5">
-              {tab.label}
-              <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${
-                activeTab === tab.key ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"
-              }`}>
-                {tabCounts[tab.key]}
-              </span>
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
         <TableToolbar
           selectedCount={selectedRecords.length}
           bulkActions={bulkActions}
@@ -317,6 +299,24 @@ export function AccountsReceivable() {
           onSearchChange={(value) => { setSearchTerm(value); setPage(1); }}
           searchPlaceholder="Search by customer or AR ID…"
         >
+          <ToggleGroup
+            type="single"
+            value={activeTab}
+            onValueChange={(value) => { if (value) { setActiveTab(value as typeof activeTab); setSearchTerm(""); setSelectedIds([]); setPage(1); } }}
+            aria-label="Filter receivables"
+            className="hide-scrollbar w-fit max-w-full justify-start overflow-x-auto rounded-full border border-border bg-card p-1"
+          >
+            {TABS.map((tab) => (
+              <ToggleGroupItem key={tab.key} value={tab.key} variant="pill" size="sm" className="gap-1.5">
+                {tab.label}
+                <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${
+                  activeTab === tab.key ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"
+                }`}>
+                  {tabCounts[tab.key]}
+                </span>
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           <NativeSelect aria-label="Filter by agent" value={agentFilter} onChange={(event) => { setAgentFilter(event.target.value); setPage(1); setSelectedIds([]); }}>
             <option value="all">All agents</option>
             {agentOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}

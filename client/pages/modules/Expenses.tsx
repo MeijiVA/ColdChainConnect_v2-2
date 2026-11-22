@@ -355,29 +355,30 @@ export function Expenses() {
       )}
 
       <div className="flex flex-col gap-3">
-        <ToggleGroup
-          type="single"
-          value={statusFilter}
-          onValueChange={(value) => { if (value) { setStatusFilter(value as StatusFilter); setPage(1); } }}
-          aria-label="Filter expenses by status"
-          className="hide-scrollbar w-fit max-w-full justify-start overflow-x-auto rounded-full border border-border bg-card p-1"
-        >
-          {FILTERS.map((filter) => (
-            <ToggleGroupItem key={filter.key} value={filter.key} variant="pill" size="sm" className="gap-1.5">
-              {filter.label}
-              <span className={`rounded-full px-1.5 py-0.5 text-xs font-bold ${
-                statusFilter === filter.key ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"
-              }`}>
-                {countFor(filter.key)}
-              </span>
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
         <TableToolbar
           searchValue={searchTerm}
           onSearchChange={(value) => { setSearchTerm(value); setPage(1); }}
           searchPlaceholder="Search by category, description or submitter…"
-        />
+        >
+          <ToggleGroup
+            type="single"
+            value={statusFilter}
+            onValueChange={(value) => { if (value) { setStatusFilter(value as StatusFilter); setPage(1); } }}
+            aria-label="Filter expenses by status"
+            className="hide-scrollbar w-fit max-w-full justify-start overflow-x-auto rounded-full border border-border bg-card p-1"
+          >
+            {FILTERS.map((filter) => (
+              <ToggleGroupItem key={filter.key} value={filter.key} variant="pill" size="sm" className="gap-1.5">
+                {filter.label}
+                <span className={`rounded-full px-1.5 py-0.5 text-xs font-bold ${
+                  statusFilter === filter.key ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"
+                }`}>
+                  {countFor(filter.key)}
+                </span>
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </TableToolbar>
       </div>
 
       <Card className="overflow-hidden rounded-xl shadow-sm">

@@ -141,6 +141,7 @@ export function AgentDeliverySchedule() {
   } | null>(null);
   const [showUnconfirmed, setShowUnconfirmed] = useState(false);
   const [myCashDays, setMyCashDays] = useState<MyCashDay[]>([]);
+  const [showPartiallyUnpaid, setShowPartiallyUnpaid] = useState(false);
 
   const fetchSchedule = async () => {
     if (!token) return;
@@ -255,6 +256,21 @@ export function AgentDeliverySchedule() {
   const unconfirmedDays = myCashDays.filter((day) => !day.handed_over);
   const unconfirmedTotal = unconfirmedDays.reduce(
     (total, day) => total + Number(day.expected),
+    0,
+  );
+
+  const partiallyUnpaidStops = deliveries.flatMap((delivery) =>
+    (delivery.delivery_items ?? [])
+      .filter(
+        (stop) =>
+          stop.status === "completed" &&
+          !stop.is_paid &&
+          (stop.outstanding_amount ?? 0) > 0,
+      )
+      .map((stop) => ({ delivery, stop })),
+  );
+  const partiallyUnpaidTotal = partiallyUnpaidStops.reduce(
+    (total, { stop }) => total + (stop.outstanding_amount ?? 0),
     0,
   );
 
@@ -404,6 +420,70 @@ export function AgentDeliverySchedule() {
                     <span className="text-sm font-semibold text-foreground">
                       {formatPeso(Number(day.expected))}
                     </span>
+                  </li>
+                ))}
+              </ul>
+            ))}
+        </section>
+
+        <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+          <button
+            type="button"
+            aria-expanded={showPartiallyUnpaid}
+            onClick={() => setShowPartiallyUnpaid((shown) => !shown)}
+            className="flex w-full items-center justify-between gap-2 text-left"
+          >
+            <span className="text-sm font-bold text-foreground">
+              Partially unpaid
+            </span>
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">
+                {formatPeso(partiallyUnpaidTotal)}
+              </span>
+              · {partiallyUnpaidStops.length} stops
+              {showPartiallyUnpaid ? (
+                <ChevronUp size={16} />
+              ) : (
+                <ChevronDown size={16} />
+              )}
+            </span>
+          </button>
+          {showPartiallyUnpaid &&
+            (partiallyUnpaidStops.length === 0 ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                No partially unpaid deliveries.
+              </p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {partiallyUnpaidStops.map(({ delivery, stop }) => (
+                  <li
+                    key={stop.id}
+                    className="flex flex-wrap items-center justify-between gap-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-foreground">
+                        {stop.destination_customer?.store_name ?? "Customer"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Order {stop.invoice?.booking_id?.slice(0, 8).toUpperCase() ?? "—"}
+                        {stop.invoice?.receipt_number
+                          ? ` · Invoice ${stop.invoice.receipt_number}`
+                          : ""}
+                        {" · "}
+                        {formatPeso(stop.outstanding_amount ?? 0)} remaining
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="success"
+                      className="min-h-10"
+                      disabled={confirmingStopId === stop.id}
+                      onClick={() =>
+                        setPaymentStop({ delivery, stop, mode: "payment" })
+                      }
+                    >
+                      Record payment
+                    </Button>
                   </li>
                 ))}
               </ul>

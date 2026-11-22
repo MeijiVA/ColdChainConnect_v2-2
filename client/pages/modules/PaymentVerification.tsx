@@ -15,7 +15,6 @@ import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TruncatedText } from "@/components/ui/truncated-text";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAutoRefresh } from "@/hooks/useAutoRefresh";
 import { useAuth } from "@/hooks/useAuth";
 import { useCan } from "@/hooks/useCan";
@@ -292,16 +291,6 @@ export function PaymentVerification() {
         </Card>
       )}
 
-      <Tabs value={tab} onValueChange={(value) => changeTab(value as PaymentTab)} className="no-print">
-        <TabsList variant="underline" aria-label="Filter payments by status">
-          {PAYMENT_TABS.map((option) => (
-            <TabsTrigger key={option.value} value={option.value} variant="underline">
-              {option.label} <span className="ml-1.5 text-xs text-muted-foreground">({tabCounts[option.value]})</span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
       <div className="no-print grid grid-cols-2 gap-4 md:grid-cols-4">
         <Card className="p-4"><div className="text-2xl font-bold">{formatPeso(totalAmount)}</div><p className="mt-1 text-xs font-semibold text-muted-foreground">Total</p></Card>
         <Card className="p-4"><div className="text-2xl font-bold">{filtered.length}</div><p className="mt-1 text-xs font-semibold text-muted-foreground">Payments</p></Card>
@@ -317,6 +306,22 @@ export function PaymentVerification() {
           selectedCount={selectedPayments.length}
           bulkActions={bulkActions}
         >
+          <div role="group" aria-label="Filter payments by status" className="inline-flex rounded-full border border-border bg-muted p-1">
+            {PAYMENT_TABS.map((option) => {
+              const active = tab === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => changeTab(option.value)}
+                  className={`rounded-full px-3.5 py-1 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  {option.label} <span className="ml-1 text-xs font-medium text-muted-foreground">{tabCounts[option.value]}</span>
+                </button>
+              );
+            })}
+          </div>
           <NativeSelect aria-label="Filter by agent" value={agentFilter} onChange={(event) => { setAgentFilter(event.target.value); setPage(1); setSelectedIds(new Set()); }}>
             <option value="all">All agents</option>
             {agentOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}

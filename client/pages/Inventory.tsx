@@ -20,7 +20,7 @@ import { Input } from "@/components/ui/input";
 import { SortableHeader, SortState, compareValues } from "@/components/SortableHeader";
 import { TableBulkAction, TableFilterSelect, TableToolbar } from "@/components/TableToolbar";
 import { RecordTitleButton } from "@/components/RecordTitleButton";
-import type { BatchReservation, ProductUnit } from "@shared/api";
+import type { BatchReservation, InventoryBatch, ProductUnit } from "@shared/api";
 import { BatchReservationsAccordion } from "@/components/BatchReservationsAccordion";
 
 interface InventoryProduct {
@@ -77,6 +77,7 @@ export function Inventory() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [products, setProducts] = useState<InventoryProduct[]>([]);
+  const [heldItemIds, setHeldItemIds] = useState<Set<string>>(new Set());
   const { batches, setBatches, selectedBatchId, setSelectedBatchId, selectedPalletId, setSelectedPalletId, searchQuery, setSearchQuery, refreshBatchesFromDB } = useInventoryContext();
   const [currentPage, setCurrentPage] = useState(1);
   const [extraInfoProduct, setExtraInfoProduct] = useState<(InventoryProduct & { batchQuantity: number }) | null>(null);
@@ -161,6 +162,17 @@ export function Inventory() {
 
   useEffect(() => {
     fetchProductsFromApi();
+    const token = localStorage.getItem("auth_token") || "";
+    fetch("/api/inventory-batches", { headers: { Authorization: `Bearer ${token}` } })
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to load inventory holds");
+        return response.json() as Promise<InventoryBatch[]>;
+      })
+      .then((rows) => {
+        const heldItems = rows.flatMap((batch) => (batch.items ?? []).filter((item) => (item.held_units ?? 0) > 0).map((item) => item.id));
+        setHeldItemIds(new Set(heldItems));
+      })
+      .catch((error) => console.error(error));
   }, [batches]);
 
   const currentBatch = batches.find((b) => b.id === selectedBatchId);
@@ -209,6 +221,10 @@ export function Inventory() {
       .filter(Boolean) as (InventoryProduct & { batchQuantity: number; batchExpiryDate: string; itemId?: string })[];
   };
 
+  const scopedBatches = selectedBatchId === "batch-all" ? batches.filter((batch) => !batch.isArchived) : currentBatch ? [currentBatch] : [];
+  const heldProductIds = new Set(scopedBatches.flatMap((batch) => batch.pallets
+    .filter((pallet) => !selectedPalletId || selectedBatchId === "batch-all" || pallet.id === selectedPalletId)
+    .flatMap((pallet) => pallet.items.filter((item) => heldItemIds.has(item.id)).map((item) => item.productId))));
   const batchProducts = getBatchProducts();
   const selectedProducts = batchProducts.filter((p) => selectedProductIds.includes(p.id));
 
@@ -500,6 +516,7 @@ export function Inventory() {
                         <div className="flex items-center gap-2 truncate">
                           {expiryStatus?.icon && <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-2xs font-semibold ${expiryStatus.status === "expired" ? "bg-destructive-soft text-destructive" : "bg-warning-soft text-warning"}`}>{expiryStatus.icon}</span>}
                           <RecordTitleButton onClick={() => setExtraInfoProduct(product)} className="min-w-0 truncate">{product.description}</RecordTitleButton>
+                          {heldProductIds.has(product.id) && <span className="shrink-0 rounded-full bg-warning-soft px-2 py-0.5 text-xs font-semibold text-warning">On hold</span>}
                         </div>
                       </td>
                       {/* Cost Per Item */}

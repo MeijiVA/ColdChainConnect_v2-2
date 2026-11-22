@@ -105,12 +105,12 @@ export async function lockStockForProducts(executor: any, productIds: string[]) 
     .for("update");
 }
 
-export async function getAvailableUnitsBySource(
+export async function getSourceAvailability(
   executor: any,
   stockItems: Array<{ id: string; product_id: string; qty_units: number; created_at: Date | string; expiration_date?: string | null }>,
   excludeBookingId?: string,
 ) {
-  if (stockItems.length === 0) return new Map<string, number>();
+  if (stockItems.length === 0) return { availableBySource: new Map<string, number>(), heldBySource: new Map<string, number>() };
   const sourceIds = stockItems.map((item) => item.id);
   const productIds = [...new Set(stockItems.map((item) => item.product_id))];
   const [palletRows, reservedByProduct] = await Promise.all([
@@ -134,11 +134,20 @@ export async function getAvailableUnitsBySource(
     new Map<string, number>(palletRows.map((row: { sourceItemId: string; quantity: number }) => [row.sourceItemId, row.quantity])),
     reservedByProduct,
   );
+  const heldBySource = new Map(stockItems.map((item) => [item.id, Math.max(0, item.qty_units - (availableBySource.get(item.id) ?? 0))]));
   const today = todayInManila();
   for (const item of stockItems) {
     if (item.expiration_date && item.expiration_date < today) availableBySource.set(item.id, 0);
   }
-  return availableBySource;
+  return { availableBySource, heldBySource };
+}
+
+export async function getAvailableUnitsBySource(
+  executor: any,
+  stockItems: Array<{ id: string; product_id: string; qty_units: number; created_at: Date | string; expiration_date?: string | null }>,
+  excludeBookingId?: string,
+) {
+  return (await getSourceAvailability(executor, stockItems, excludeBookingId)).availableBySource;
 }
 
 export async function getAvailableUnitsBySourceForProducts(

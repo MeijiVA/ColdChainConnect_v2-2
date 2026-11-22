@@ -4,7 +4,7 @@ import { desc, eq } from "drizzle-orm";
 import { InventoryBatch, InventoryBatchItem, CreateInventoryBatchSchema, UpdateInventoryBatchSchema } from "../../shared/api";
 import { db } from "../db";
 import { inventory_batches, batch_pallets, pallet_items } from "../db/schema";
-import { getAvailableUnitsBySource } from "../services/inventory-reservations";
+import { getSourceAvailability } from "../services/inventory-reservations";
 import type { AuthRequest } from "../middleware/auth";
 import { getAgentOrderIds } from "../services/agent-bookings";
 
@@ -79,7 +79,7 @@ export const listInventoryBatches: RequestHandler = async (req: AuthRequest, res
     });
 
     const sourceItems = dbBatches.flatMap((batch) => batch.pallets.flatMap((pallet) => pallet.items));
-    const availableBySource = await getAvailableUnitsBySource(db, sourceItems, orderId);
+    const { availableBySource, heldBySource } = await getSourceAvailability(db, sourceItems, orderId);
     const result: InventoryBatch[] = dbBatches.map((batch) => ({
       id: batch.id,
       name: batch.batch_name,
@@ -93,6 +93,7 @@ export const listInventoryBatches: RequestHandler = async (req: AuthRequest, res
           product_id: item.product_id,
           qty_units: item.qty_units,
           available_units: availableBySource.get(item.id) ?? 0,
+          held_units: heldBySource.get(item.id) ?? 0,
           unit_cost: "0.00",
           created_at: item.created_at.toISOString(),
           updated_at: item.updated_at.toISOString(),

@@ -1,4 +1,4 @@
-import type { AgentScheduleDelivery, AgentSchedulePallet, DeliveryItem } from "@shared/api";
+import type { AgentScheduleDelivery, AgentSchedulePallet, AgentScheduleStop, DeliveryItem } from "@shared/api";
 
 export function localScheduleDate(date: Date) {
   const year = date.getFullYear();
@@ -19,6 +19,19 @@ export function statusClasses(status: DeliveryItem["status"]) {
   if (status === "completed") return "border-green/20 bg-green/10 text-green";
   if (status === "in_transit") return "border-gold/30 bg-gold/10 text-foreground";
   return "border-link/30 bg-info-soft text-foreground";
+}
+
+export type UnconfirmedPayment = { amount: number; label: string };
+
+export function unconfirmedPayment(stop: AgentScheduleStop): UnconfirmedPayment | null {
+  if (stop.status !== "completed") return null;
+  const unverified = stop.unverified_amount ?? 0;
+  const total = Number(stop.invoice?.total_amount ?? 0);
+  const unpaid = stop.is_paid ? 0 : (stop.outstanding_amount ?? 0) > 0 ? stop.outstanding_amount! : total;
+  if (unverified <= 0 && unpaid <= 0) return null;
+  if (stop.is_paid) return { amount: unverified, label: "Paid · awaiting Accounting" };
+  if (unverified > 0) return { amount: unverified + unpaid, label: "Partially paid · awaiting Accounting" };
+  return { amount: unpaid, label: "Not paid" };
 }
 
 export function palletStatusLabel(status: AgentSchedulePallet["status"]) {

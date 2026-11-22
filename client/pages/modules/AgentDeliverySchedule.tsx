@@ -23,7 +23,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { optimizeRouteOrder } from "@/lib/routeOrder";
-import { localScheduleDate, statusClasses } from "@/lib/agentSchedule";
+import { localScheduleDate, statusClasses, unconfirmedPayment } from "@/lib/agentSchedule";
 import { DeliveryRouteMap, type MapFocus } from "@/components/DeliveryRouteMap";
 import { AgentStopDetailDialog } from "@/components/AgentStopDetailDialog";
 import { DeliveryPaymentPrompt } from "@/components/shared/DeliveryPaymentPrompt";
@@ -241,12 +241,13 @@ export function AgentDeliverySchedule() {
   }, [view, visibleDeliveries]);
 
   const unconfirmedStops = deliveries.flatMap((delivery) =>
-    (delivery.delivery_items ?? [])
-      .filter((stop) => stop.status === "completed" && !stop.is_paid)
-      .map((stop) => ({ delivery, stop })),
+    (delivery.delivery_items ?? []).flatMap((stop) => {
+      const payment = unconfirmedPayment(stop);
+      return payment ? [{ delivery, stop, payment }] : [];
+    }),
   );
   const unconfirmedTotal = unconfirmedStops.reduce(
-    (total, { stop }) => total + Number(stop.invoice?.total_amount ?? 0),
+    (total, { payment }) => total + payment.amount,
     0,
   );
 
@@ -378,7 +379,7 @@ export function AgentDeliverySchedule() {
               </p>
             ) : (
               <ul className="divide-y divide-border">
-                {unconfirmedStops.map(({ delivery, stop }) => (
+                {unconfirmedStops.map(({ delivery, stop, payment }) => (
                   <li
                     key={stop.id}
                     className="flex items-center justify-between gap-3 py-2"
@@ -392,7 +393,7 @@ export function AgentDeliverySchedule() {
                         {stop.invoice?.receipt_number
                           ? `Invoice ${stop.invoice.receipt_number}`
                           : "Invoice"}{" "}
-                        · {formatPeso(stop.invoice?.total_amount)}
+                        · {formatPeso(payment.amount)} · {payment.label}
                       </p>
                     </div>
                     <Button

@@ -633,6 +633,9 @@ export interface UnverifiedPayment {
   recorded_by_username: string | null;
   recorded_by_name: string | null;
   recorded_by_role: "admin" | "agent" | "driver" | "staff" | null;
+  /** User id and name of the agent who owns the delivery run this payment was collected on. */
+  agent_user_id?: string | null;
+  agent_name?: string | null;
   /** Bank transfer or check reference typed when the payment was recorded. */
   payment_reference?: string | null;
 }
@@ -695,6 +698,8 @@ export interface AgentScheduleStop extends DeliveryItem {
   sale_agent: Pick<User, "id" | "username"> | null;
   pallets: AgentSchedulePallet[];
   outstanding_amount?: number;
+  /** Collected on this stop but not yet verified by Accounting at End-of-Day. */
+  unverified_amount?: number;
 }
 
 export type AgentScheduleDelivery = Omit<Delivery, "agent" | "driver"> & {

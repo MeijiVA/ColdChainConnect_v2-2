@@ -1,4 +1,7 @@
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ReceiptSheet } from "@/components/receipts/ReceiptSheet";
+import { ReceiptBatchPrint } from "@/components/receipts/ReceiptBatchPrint";
 import { PageDialog } from "@/components/shared/PageDialog";
 import { StatCard } from "@/components/shared/StatCard";
 import { Package, CalendarDays, Store, CircleCheck } from "lucide-react";
@@ -49,6 +52,9 @@ export function DeliveryHistory() {
   const [dateFilter,   setDateFilter]   = useState("");
   const [page,         setPage]         = useState(1);
   const [viewReceipt,  setViewReceipt]  = useState<ReceiptExt | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [printing, setPrinting] = useState<ReceiptExt[] | null>(null);
+  const finishPrinting = useCallback(() => setPrinting(null), []);
   const [sort, setSort] = useState<SortState<"receipt" | "customer" | "truck" | "confirmed" | "notes">>(null);
 
   const fetchAll = useCallback(async () => {
@@ -111,6 +117,19 @@ export function DeliveryHistory() {
     return compareValues(value(a), value(b)) * (sort.direction === "asc" ? 1 : -1);
   });
   const { currentPage, totalPages, pageItems: paginated } = paginate(sorted, page);
+  const selectedReceipts = sorted.filter((r) => selectedIds.has(r.id));
+  const allOnPageSelected = paginated.length > 0 && paginated.every((r) => selectedIds.has(r.id));
+  const toggleReceipt = (id: string, checked: boolean) => setSelectedIds((current) => {
+    const next = new Set(current);
+    if (checked) next.add(id); else next.delete(id);
+    return next;
+  });
+  const togglePage = (checked: boolean) => setSelectedIds((current) => {
+    const next = new Set(current);
+    for (const r of paginated) { if (checked) next.add(r.id); else next.delete(r.id); }
+    return next;
+  });
+  const clearSelection = () => setSelectedIds(new Set());
 
 
 
@@ -152,16 +171,18 @@ export function DeliveryHistory() {
       {/* Search and Filters */}
       <TableToolbar
         searchValue={search}
-        onSearchChange={(value) => { setSearch(value); setPage(1); }}
+        onSearchChange={(value) => { setSearch(value); setPage(1); clearSelection(); }}
         searchPlaceholder="Search by receipt #, customer, truck, or invoice…"
+        selectedCount={selectedReceipts.length}
+        bulkActions={[{ label: "Print selected", onSelect: () => setPrinting(selectedReceipts) }]}
       >
-        <TableFilterSelect label="Customer" value={customerFilter} onChange={(value) => { setCustomerFilter(value); setPage(1); }}>
+        <TableFilterSelect label="Customer" value={customerFilter} onChange={(value) => { setCustomerFilter(value); setPage(1); clearSelection(); }}>
           <option value="">All Customers</option>
           {customers.map((c) => (
             <option key={c.id} value={c.id}>{c.store_name || c.id.slice(0, 8)}</option>
           ))}
         </TableFilterSelect>
-        <input type="date" aria-label="Confirmed on date" title="Show deliveries confirmed on this date" value={dateFilter} onChange={(event) => { setDateFilter(event.target.value); setPage(1); }} className="rounded-full border border-border bg-card px-3 py-2 text-sm text-foreground focus:border-accent-2 focus:outline-none" />
+        <input type="date" aria-label="Confirmed on date" title="Show deliveries confirmed on this date" value={dateFilter} onChange={(event) => { setDateFilter(event.target.value); setPage(1); clearSelection(); }} className="rounded-full border border-border bg-card px-3 py-2 text-sm text-foreground focus:border-accent-2 focus:outline-none" />
       </TableToolbar>
 
       {/* Table */}
@@ -173,38 +194,45 @@ export function DeliveryHistory() {
             <Table>
               <thead>
                 <tr>
+                  <th className="w-10 bg-muted px-3 py-2.5">
+                    <Checkbox aria-label="Select all receipts on this page" checked={allOnPageSelected} onCheckedChange={(checked) => togglePage(checked === true)} />
+                  </th>
                   <SortableHeader label="Receipt #" sortKey="receipt" sort={sort} onSort={setSort} />
                   <SortableHeader label="Customer" sortKey="customer" sort={sort} onSort={setSort} />
-                  <SortableHeader label="Truck" sortKey="truck" sort={sort} onSort={setSort} />
-                  <SortableHeader label="Confirmed At" sortKey="confirmed" sort={sort} onSort={setSort} />
-                  <SortableHeader label="Notes" sortKey="notes" sort={sort} onSort={setSort} />
+                  <SortableHeader label="Truck" sortKey="truck" sort={sort} onSort={setSort} className="hidden md:table-cell" />
+                  <SortableHeader label="Confirmed At" sortKey="confirmed" sort={sort} onSort={setSort} className="hidden sm:table-cell" />
+                  <SortableHeader label="Notes" sortKey="notes" sort={sort} onSort={setSort} className="hidden lg:table-cell" />
                   <th className="bg-muted px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {paginated.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-6 py-8 text-center text-muted-foreground">
                       {receipts.length === 0 ? "No completed deliveries yet." : "No results matching your search."}
                     </td>
                   </tr>
                 ) : (
                   paginated.map((r) => (
                     <tr key={r.id} className="border-b border-border hover:bg-accent/50 transition-colors">
+                      <td className="px-3 py-3">
+                        <Checkbox aria-label={`Select receipt ${r.receipt_number}`} checked={selectedIds.has(r.id)} onCheckedChange={(checked) => toggleReceipt(r.id, checked === true)} />
+                      </td>
                       <td className="px-3 py-3 font-mono font-semibold">
                         <RecordTitleButton onClick={() => setViewReceipt(r)}>{r.receipt_number}</RecordTitleButton>
+                        <p className="mt-0.5 text-xs font-normal text-muted-foreground sm:hidden">{new Date(r.confirmed_at).toLocaleDateString("en-PH")}</p>
                       </td>
                       <td className="px-3 py-3 text-foreground font-semibold">
                         {r.customer?.store_name ?? <span className="text-muted-foreground font-normal">{r.customer_id.slice(0, 8)}…</span>}
                         {r.customer?.location && <p className="text-muted-foreground font-normal text-xs">{r.customer.location}</p>}
                       </td>
-                      <td className="px-3 py-3 text-foreground">
+                      <td className="hidden px-3 py-3 text-foreground md:table-cell">
                         {r.truck?.license_plate ?? <span className="text-muted-foreground">{r.truck_id.slice(0, 8)}…</span>}
                       </td>
-                      <td className="px-3 py-3 text-foreground whitespace-nowrap">
+                      <td className="hidden px-3 py-3 text-foreground whitespace-nowrap sm:table-cell">
                         {new Date(r.confirmed_at).toLocaleString("en-PH")}
                       </td>
-                      <td className="px-3 py-3 text-muted-foreground">{r.notes ?? "—"}</td>
+                      <td className="hidden px-3 py-3 text-muted-foreground lg:table-cell">{r.notes ?? "—"}</td>
                       <td className="px-3 py-3">
                         <Button
                           onClick={() => setViewReceipt(r)}
@@ -226,6 +254,8 @@ export function DeliveryHistory() {
 
     </div>
   
+      {printing && <ReceiptBatchPrint receipts={printing} onDone={finishPrinting} />}
+
       {(viewReceipt) && (
         <PageDialog onClose={() => setViewReceipt(null)}>
 <div className="mx-auto w-full !max-w-xl">
@@ -287,73 +317,7 @@ export function OriginalReceiptModal({ receipt, onClose, showBack = true }: { re
       </div>
 
       <div className="max-w-lg w-full rounded-2xl border border-border bg-white text-black">
-        <div className="p-6 sm:p-8 space-y-6 font-mono text-sm" id="original-receipt-print-area">
-          {/* Company header */}
-          <div className="text-center border-b-2 border-dashed border-border pb-4">
-            <p className="font-rajdhani text-2xl font-bold text-foreground tracking-tight">COLDCHAIN CONNECT</p>
-            <p className="page-subtitle">ACDP Warehouse, Pampanga</p>
-            <p className="text-xs text-muted-foreground">Cold Chain Logistics & Distribution</p>
-          </div>
-
-          {/* Receipt info */}
-          <div className="space-y-1 text-xs">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Receipt No.:</span>
-              <span className="font-bold text-accent-2">{receipt.receipt_number}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Date:</span>
-              <span>{new Date(receipt.confirmed_at).toLocaleString("en-PH")}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Invoice ID:</span>
-              <span>{receipt.invoice_id.slice(0, 8)}…</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Truck:</span>
-              <span>{receipt.truck?.license_plate ?? receipt.truck_id.slice(0, 8)}</span>
-            </div>
-            {receipt.confirmed_by && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Confirmed by:</span>
-                <span>{receipt.confirmed_by}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Customer info */}
-          <div className="border-t border-dashed border-border pt-4 space-y-1 text-xs">
-            <p className="font-semibold text-foreground mb-1">Delivered to:</p>
-            <p className="font-bold">{receipt.customer?.store_name ?? receipt.customer_id}</p>
-            {receipt.customer?.location && <p className="text-muted-foreground">{receipt.customer.location}</p>}
-            {receipt.customer?.contact_info && <p className="text-muted-foreground">{receipt.customer.contact_info}</p>}
-          </div>
-
-          {/* Invoice status */}
-          <div className="border-t border-dashed border-border pt-4 space-y-1 text-xs">
-            {receipt.invoice?.payment_status && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Payment Status:</span>
-                <span>{receipt.invoice.payment_status.toUpperCase()}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Notes */}
-          {receipt.notes && (
-            <div className="border-t border-dashed border-border pt-4 text-xs">
-              <p className="text-muted-foreground">Notes:</p>
-              <p>{receipt.notes}</p>
-            </div>
-          )}
-
-          {/* Footer */}
-          <div className="border-t-2 border-dashed border-border pt-4 text-center text-xs text-muted-foreground space-y-1">
-            <p>This is an official Original Receipt.</p>
-            <p>Thank you for your business!</p>
-            <p className="mt-2 font-semibold text-foreground">ColdChain Connect</p>
-          </div>
-        </div>
+        <ReceiptSheet receipt={receipt} id="original-receipt-print-area" />
       </div>
     </div>
   );

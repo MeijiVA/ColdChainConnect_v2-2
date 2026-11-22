@@ -1,7 +1,7 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { RequestHandler } from "express";
 import { db } from "../db";
-import { accounts_receivable, agents, deliveries, trucks } from "../db/schema";
+import { accounts_receivable, agents, deliveries, receipt_payment_entries, receipts, trucks } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
 
 export const getAgentSchedule: RequestHandler = async (req: AuthRequest, res) => {
@@ -80,6 +80,19 @@ export const getAgentSchedule: RequestHandler = async (req: AuthRequest, res) =>
       : [];
     const fullNameByUserId = new Map(saleAgentProfiles.map((p) => [p.user_id, p.full_name?.trim() || null]));
 
+    const stopIds = assignedDeliveries.flatMap((d) => d.delivery_items.map((s) => s.id));
+    const unverifiedRows = stopIds.length
+      ? await db
+          .select({ stopId: receipts.delivery_item_id, amount: receipt_payment_entries.amount })
+          .from(receipt_payment_entries)
+          .innerJoin(receipts, eq(receipts.id, receipt_payment_entries.receipt_id))
+          .where(and(inArray(receipts.delivery_item_id, stopIds), isNull(receipt_payment_entries.verified_at)))
+      : [];
+    const unverifiedByStop = new Map<string, number>();
+    for (const row of unverifiedRows) {
+      unverifiedByStop.set(row.stopId, (unverifiedByStop.get(row.stopId) ?? 0) + Number(row.amount));
+    }
+
     const schedule = assignedDeliveries
       .filter((delivery) => delivery.delivery_items.length > 0)
       .map((delivery) => ({
@@ -88,6 +101,7 @@ export const getAgentSchedule: RequestHandler = async (req: AuthRequest, res) =>
         delivery_items: delivery.delivery_items.map((stop) => ({
           ...stop,
           outstanding_amount: stop.accounts_receivable.reduce((sum, record) => sum + Number(record.amount_due), 0),
+          unverified_amount: unverifiedByStop.get(stop.id) ?? 0,
           invoice: stop.invoice
             ? {
                 id: stop.invoice.id,

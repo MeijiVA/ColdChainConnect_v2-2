@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db";
-import { agents, customers, drivers, invoices, receipt_payment_entries, receipts, trucks, users } from "../db/schema";
+import { agents, customers, deliveries, delivery_items, drivers, invoices, receipt_payment_entries, receipts, trucks, users } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
 import { logAction } from "../middleware/audit-logger";
 import { paymentNeedsClearance } from "../../shared/api";
@@ -22,11 +22,16 @@ export const listUnverifiedPayments: RequestHandler = async (_req: AuthRequest, 
         receipt: receipts,
         customer_name: customers.store_name,
         invoice_receipt_number: invoices.receipt_number,
+        agent_user_id: agents.user_id,
+        agent_name: agents.full_name,
       })
       .from(receipt_payment_entries)
       .innerJoin(receipts, eq(receipts.id, receipt_payment_entries.receipt_id))
       .innerJoin(customers, eq(customers.id, receipts.customer_id))
       .innerJoin(invoices, eq(invoices.id, receipts.invoice_id))
+      .leftJoin(delivery_items, eq(delivery_items.id, receipts.delivery_item_id))
+      .leftJoin(deliveries, eq(deliveries.id, delivery_items.delivery_id))
+      .leftJoin(agents, eq(agents.id, deliveries.agent_id))
       .where(isNull(receipt_payment_entries.verified_at))
       .orderBy(asc(receipt_payment_entries.created_at));
 
@@ -51,7 +56,7 @@ export const listUnverifiedPayments: RequestHandler = async (_req: AuthRequest, 
       }
     }
 
-    res.json(rows.map(({ payment, receipt, customer_name, invoice_receipt_number }) => {
+    res.json(rows.map(({ payment, receipt, customer_name, invoice_receipt_number, agent_user_id, agent_name }) => {
       const recorder = payment.recorded_by ? recorderDetails.get(payment.recorded_by) : undefined;
       return {
         id: payment.id,
@@ -70,6 +75,8 @@ export const listUnverifiedPayments: RequestHandler = async (_req: AuthRequest, 
         recorded_by_username: recorder?.username ?? null,
         recorded_by_name: recorder?.name ?? null,
         recorded_by_role: (recorder?.role as "admin" | "agent" | "driver" | "staff" | undefined) ?? null,
+        agent_user_id: agent_user_id ?? null,
+        agent_name: agent_name?.trim() || null,
       };
     }));
   } catch (error) {

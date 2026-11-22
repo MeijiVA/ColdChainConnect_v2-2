@@ -296,6 +296,7 @@ export interface InventoryBatchItem {
   product_id: string;
   qty_units: number;
   available_units?: number;
+  held_units?: number;
   unit_cost: string;
   created_at: string;
   updated_at: string;

@@ -25,6 +25,8 @@ import { PaymentPeriodFilter } from "./PaymentPeriodFilter";
 import { BulkVerifyDialog } from "./BulkVerifyDialog";
 
 const formatDate = (value: string) => new Date(value).toLocaleDateString("en-PH");
+const paymentAgentId = (payment: UnverifiedPayment) =>
+  payment.agent_user_id ?? (payment.recorded_by_role === "agent" ? payment.recorded_by : null);
 const businessDate = (value: string) => new Date(new Date(value).getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
 function PaymentPrintSheet({ payments, periodText }: { payments: UnverifiedPayment[]; periodText: string }) {
@@ -211,8 +213,8 @@ export function PaymentVerification() {
   const agentOptions = Array.from(
     new Map<string, string>([
       ...payments
-        .filter((payment) => payment.recorded_by_role === "agent" && payment.recorded_by)
-        .map((payment): [string, string] => [payment.recorded_by!, payment.recorded_by_name || payment.recorded_by!]),
+        .filter((payment) => paymentAgentId(payment))
+        .map((payment): [string, string] => [paymentAgentId(payment)!, payment.agent_name || payment.recorded_by_name || paymentAgentId(payment)!]),
       ...allAgents.map((agent): [string, string] => [agent.id, agent.name]),
     ]),
   ).sort((a, b) => a[1].localeCompare(b[1]));
@@ -226,15 +228,15 @@ export function PaymentVerification() {
   const filtered = payments.filter((payment) => {
     const day = businessDate(payment.confirmed_at);
     if (bounds && (day < bounds.from || day > bounds.to)) return false;
-    if (agentFilter !== "all" && payment.recorded_by !== agentFilter) return false;
+    if (agentFilter !== "all" && paymentAgentId(payment) !== agentFilter && payment.recorded_by !== agentFilter) return false;
     if (!query) return true;
-    return [payment.customer_name, payment.receipt_number, payment.invoice_receipt_number, payment.recorded_by_name, payment.recorded_by_username, payment.payment_reference, payment.payment_method]
+    return [payment.agent_name, payment.customer_name, payment.receipt_number, payment.invoice_receipt_number, payment.recorded_by_name, payment.recorded_by_username, payment.payment_reference, payment.payment_method]
       .some((value) => value?.toLowerCase().includes(query));
   });
   const { currentPage, totalPages, pageItems } = paginate(filtered, page);
   const totalAmount = filtered.reduce((sum, payment) => sum + Number(payment.amount), 0);
   const cashAmount = filtered.filter((payment) => payment.payment_method === "cash").reduce((sum, payment) => sum + Number(payment.amount), 0);
-  const agentCount = new Set(filtered.filter((payment) => payment.recorded_by_role === "agent").map((payment) => payment.recorded_by)).size;
+  const agentCount = new Set(filtered.map(paymentAgentId).filter(Boolean)).size;
   const selectedPayments = filtered.filter((payment) => selectedIds.has(payment.id));
   const bulkActions: TableBulkAction[] = [
     ...(canVerify ? [{ label: "Verify selected", onSelect: () => setBulkTarget(selectedPayments) }] : []),
@@ -344,7 +346,12 @@ export function PaymentVerification() {
                   </TableCell>
                   <TableCell className="text-sm capitalize text-muted-foreground">{payment.payment_method?.replace(/_/g, " ") || "—"}</TableCell>
                   <TableCell className="whitespace-nowrap text-sm font-bold">{formatPeso(payment.amount)}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{payment.recorded_by_name || "—"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {payment.recorded_by_name || "—"}
+                    {payment.agent_name && payment.agent_user_id !== payment.recorded_by && (
+                      <span className="block text-xs">Agent: {payment.agent_name}</span>
+                    )}
+                  </TableCell>
                   <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(payment.confirmed_at)}</TableCell>
                   {canVerify && (
                     <TableCell className="text-right">

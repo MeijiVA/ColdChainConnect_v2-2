@@ -30,6 +30,7 @@ export function MaintenancePanel() {
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [formKey, setFormKey] = useState(0);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -78,14 +79,31 @@ export function MaintenancePanel() {
 
   const visible = requests.filter((request) => statusFilter === "all" || request.status === statusFilter);
 
+  if (!canDecide) {
+    return (
+      <div className="flex-1 px-4 md:px-6 lg:px-7 py-4 md:py-6 overflow-y-auto space-y-6">
+        <div>
+          <h1 className="page-title">Maintenance</h1>
+          <p className="page-subtitle">Ask for repairs on any equipment or vehicle</p>
+        </div>
+        {token && (
+          <MaintenanceRequestForm
+            key={formKey}
+            token={token}
+            onSubmitted={() => setFormKey((key) => key + 1)}
+            onCancel={() => setFormKey((key) => key + 1)}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 px-4 md:px-6 lg:px-7 py-4 md:py-6 overflow-y-auto space-y-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="page-title">Maintenance</h1>
-          <p className="page-subtitle">
-            {canDecide ? "Review maintenance requests for any equipment or vehicle" : "Ask for repairs on any equipment or vehicle"}
-          </p>
+          <p className="page-subtitle">Review maintenance requests for any equipment or vehicle</p>
         </div>
         {canRequest && !showForm && (
           <Button onClick={() => setShowForm(true)}>

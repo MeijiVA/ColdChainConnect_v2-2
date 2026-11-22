@@ -12,6 +12,7 @@ export interface AuthRequest extends Request {
 
 const DRIVER_ALLOWED_PATHS = new Set([
   "/api/driver-schedule",
+  "/api/maintenance-requests",
   "/api/auth/refresh",
 ]);
 

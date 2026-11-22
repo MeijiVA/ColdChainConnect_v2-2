@@ -179,6 +179,12 @@ const POLICY: Record<string, Policy> = {
   "POST /api/agent-returns/:id/accept": ADMIN_ONLY,
   "POST /api/agent-returns/:id/reject": ADMIN_ONLY,
 
+  // Maintenance requests: agents and drivers ask for any equipment and see their own; admin reviews all.
+  "GET /api/maintenance-requests": { agent: true, driver: true, staff: "none" },
+  "POST /api/maintenance-requests": { agent: true, driver: true, staff: "none" },
+  "POST /api/maintenance-requests/:id/approve": ADMIN_ONLY,
+  "POST /api/maintenance-requests/:id/reject": ADMIN_ONLY,
+
   // Inventory batches
   "GET /api/inventory-batches": agentAnd("order-fulfillment"),
   "GET /api/inventory-batches/:id": agentAnd("order-fulfillment"),

@@ -160,8 +160,9 @@ const POLICY: Record<string, Policy> = {
   "GET /api/cash-remittances/mine": { agent: true, driver: false, staff: "none", admin: false },
   "POST /api/cash-remittances": staffOnly("accounting"),
   "POST /api/payments/:id/verify": staffOnly("accounting"),
-  "GET /api/expenses": staffOnly("accounting"),
-  "POST /api/expenses": staffOnly("accounting"),
+  // Agents and drivers reach expenses only for their own maintenance; the handler scopes them.
+  "GET /api/expenses": { ...staffOnly("accounting"), agent: true, driver: true },
+  "POST /api/expenses": { ...staffOnly("accounting"), agent: true, driver: true },
   "POST /api/expenses/:id/approve": ADMIN_ONLY,
   "POST /api/expenses/:id/reject": ADMIN_ONLY,
   "POST /api/expenses/:id/pay": staffOnly("accounting"),
@@ -179,12 +180,6 @@ const POLICY: Record<string, Policy> = {
   "POST /api/agent-returns": agentAnd("delivery-operations"),
   "POST /api/agent-returns/:id/accept": ADMIN_ONLY,
   "POST /api/agent-returns/:id/reject": ADMIN_ONLY,
-
-  // Maintenance requests: agents and drivers ask for any equipment and see their own; admin reviews all.
-  "GET /api/maintenance-requests": { agent: true, driver: true, staff: "none" },
-  "POST /api/maintenance-requests": { agent: true, driver: true, staff: "none" },
-  "POST /api/maintenance-requests/:id/approve": ADMIN_ONLY,
-  "POST /api/maintenance-requests/:id/reject": ADMIN_ONLY,
 
   // Inventory batches
   "GET /api/inventory-batches": agentAnd("order-fulfillment"),

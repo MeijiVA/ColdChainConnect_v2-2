@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { MAINTENANCE_EXPENSE_CATEGORY } from "@shared/api";
 
 interface MaintenanceRequestFormProps {
   token: string;
@@ -20,10 +21,14 @@ export function MaintenanceRequestForm({ token, onSubmitted, onCancel }: Mainten
     event.preventDefault();
     setSaving(true);
     try {
-      const res = await fetch("/api/maintenance-requests", {
+      const res = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ asset, description, estimated_cost: estimatedCost.trim() === "" ? null : Number(estimatedCost) }),
+        body: JSON.stringify({
+          category: MAINTENANCE_EXPENSE_CATEGORY,
+          description: `${asset.trim()}: ${description.trim()}`,
+          amount: estimatedCost.trim(),
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -64,20 +69,21 @@ export function MaintenanceRequestForm({ token, onSubmitted, onCancel }: Mainten
         />
       </div>
       <div className="space-y-1">
-        <label htmlFor="maintenance-cost" className="text-xs font-semibold text-muted-foreground">Estimated cost (optional)</label>
+        <label htmlFor="maintenance-cost" className="text-xs font-semibold text-muted-foreground">Estimated cost</label>
         <Input
           id="maintenance-cost"
           type="number"
-          min="0"
+          min="0.01"
           step="0.01"
           value={estimatedCost}
           placeholder="0.00"
           onChange={(event) => setEstimatedCost(event.target.value)}
+          required
         />
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>Cancel</Button>
-        <Button type="submit" disabled={saving || !asset.trim() || !description.trim()}>
+        <Button type="submit" disabled={saving || !asset.trim() || !description.trim() || !estimatedCost.trim()}>
           {saving ? "Submitting…" : "Submit request"}
         </Button>
       </div>

@@ -390,9 +390,12 @@ export function AgentDeliverySchedule() {
                           "Unknown customer"}
                       </p>
                       <p className="text-xs text-muted-foreground">
+                        {stop.invoice?.booking_id
+                          ? `Order ${stop.invoice.booking_id.slice(0, 8).toUpperCase()}`
+                          : "Order"}
                         {stop.invoice?.receipt_number
-                          ? `Invoice ${stop.invoice.receipt_number}`
-                          : "Invoice"}{" "}
+                          ? ` · Invoice ${stop.invoice.receipt_number}`
+                          : ""}{" "}
                         · {formatPeso(payment.amount)} · {payment.label}
                       </p>
                     </div>

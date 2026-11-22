@@ -914,6 +914,7 @@ export function DeliveryDispatch() {
       customers={customers}
       agents={agents}
       drivers={drivers}
+      truckDeliveries={truckDeliveries}
       onClose={() => setShowAddDeliveryModal(false)}
       onSave={handleCreateDelivery}
     />
@@ -1189,16 +1190,18 @@ function EditTruckModal({ truck, token, onClose, onSaved }: {
 
 // ─── Add Delivery Modal ────────────────────────────────────────────────────────
 
-function AddDeliveryModal({ truck, eligibleInvoices, customers, agents, drivers, onClose, onSave }: {
+function AddDeliveryModal({ truck, eligibleInvoices, customers, agents, drivers, truckDeliveries, onClose, onSave }: {
   truck: Truck;
   eligibleInvoices: Invoice[];
   customers: Customer[];
   agents: Agent[];
   drivers: Driver[];
+  truckDeliveries: DeliveryExt[];
   onClose: () => void;
   onSave: (d: { invoice_id: string; destination_customer_id: string }[], driverId: string, scheduledDate: string, scheduledTime: string) => Promise<void>;
 }) {
   const [stops, setStops] = useState([{ invoice_id: "" }]);
+  const [showExistingRuns, setShowExistingRuns] = useState(false);
   const [orderSearch, setOrderSearch] = useState("");
   const [orderDate, setOrderDate] = useState(() => localScheduleDate(new Date()));
   const [selectedDriverId, setSelectedDriverId] = useState(truck.driver_id ?? "");
@@ -1289,6 +1292,7 @@ function AddDeliveryModal({ truck, eligibleInvoices, customers, agents, drivers,
 
   return (
     <ModalShell title={`Add Delivery — ${truck.license_plate}`} onClose={onClose}>
+      {showExistingRuns && <ExistingRunsDialog deliveries={truckDeliveries} customers={customers} onClose={() => setShowExistingRuns(false)} />}
       <div className="space-y-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="block text-xs font-semibold text-foreground">
@@ -1371,7 +1375,10 @@ function AddDeliveryModal({ truck, eligibleInvoices, customers, agents, drivers,
 
         <div className="flex items-center justify-between">
           <label className="text-xs font-semibold text-foreground">Delivery Stops *</label>
-          <Button onClick={addStop} variant="link" className="h-auto p-0">+ Add Stop</Button>
+          <div className="flex items-center gap-3">
+            <Button onClick={() => setShowExistingRuns(true)} variant="link" className="h-auto p-0">View existing deliveries</Button>
+            <Button onClick={addStop} variant="link" className="h-auto p-0">+ Add Stop</Button>
+          </div>
         </div>
         {stops.map((stop, i) => {
           const selectedInv = districtInvoices.find((inv) => inv.id === stop.invoice_id);
@@ -1438,6 +1445,38 @@ function AddDeliveryModal({ truck, eligibleInvoices, customers, agents, drivers,
         </Button>
       </div>
     </ModalShell>
+  );
+}
+
+function ExistingRunsDialog({ deliveries, customers, onClose }: { deliveries: DeliveryExt[]; customers: Customer[]; onClose: () => void }) {
+  const sorted = [...deliveries].sort((a, b) =>
+    (b.scheduled_date ?? "").localeCompare(a.scheduled_date ?? "") ||
+    (a.scheduled_time ?? "").localeCompare(b.scheduled_time ?? ""),
+  );
+  return (
+    <PageDialog onClose={onClose} label="Existing deliveries">
+      <div className="p-5 space-y-3">
+        <h2 className="font-rajdhani text-xl font-bold text-foreground">Existing deliveries</h2>
+        {sorted.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No deliveries are scheduled for this truck.</p>
+        ) : (
+          <ul className="space-y-2">
+            {sorted.map((delivery) => (
+              <li key={delivery.id} className="rounded-lg border border-border bg-muted px-3 py-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-foreground">{formatRunDate(delivery)} · {formatRunTime(delivery.scheduled_time)}</span>
+                  <StatusBadge label={statusLabel(delivery.status)} tone={runStatusTone(delivery.status)} />
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {delivery.delivery_items.length} stop{delivery.delivery_items.length === 1 ? "" : "s"}
+                  {delivery.delivery_items.length > 0 && `: ${delivery.delivery_items.map((item) => customers.find((customer) => customer.id === item.destination_customer_id)?.store_name ?? "Unknown customer").join(", ")}`}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </PageDialog>
   );
 }
 

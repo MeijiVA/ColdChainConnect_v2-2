@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db } from "../db";
 import { agents, customers, deliveries, delivery_items, drivers, invoices, receipt_payment_entries, receipts, trucks, users } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
@@ -12,7 +12,20 @@ const MAX_REMARKS_LENGTH = 500;
 
 // ─── GET /api/payments/unverified ─────────────────────────────────────────────
 
-export const listUnverifiedPayments: RequestHandler = async (_req: AuthRequest, res) => {
+const PAYMENT_STATUSES = ["ongoing", "accomplished", "all"] as const;
+type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+export const listUnverifiedPayments: RequestHandler = async (req: AuthRequest, res) => {
+  const requested = typeof req.query.status === "string" ? req.query.status : "ongoing";
+  if (!(PAYMENT_STATUSES as readonly string[]).includes(requested)) {
+    return res.status(400).json({ error: "status must be ongoing, accomplished or all" });
+  }
+  const status = requested as PaymentStatus;
+  const statusFilter =
+    status === "ongoing" ? isNull(receipt_payment_entries.verified_at)
+      : status === "accomplished" ? isNotNull(receipt_payment_entries.verified_at)
+        : undefined;
+
   try {
     if (!process.env.DATABASE_URL) return res.json([]);
 
@@ -32,7 +45,7 @@ export const listUnverifiedPayments: RequestHandler = async (_req: AuthRequest, 
       .leftJoin(delivery_items, eq(delivery_items.id, receipts.delivery_item_id))
       .leftJoin(deliveries, eq(deliveries.id, delivery_items.delivery_id))
       .leftJoin(agents, eq(agents.id, deliveries.agent_id))
-      .where(isNull(receipt_payment_entries.verified_at))
+      .where(statusFilter)
       .orderBy(asc(receipt_payment_entries.created_at));
 
     const recorderIds = rows
@@ -66,6 +79,7 @@ export const listUnverifiedPayments: RequestHandler = async (_req: AuthRequest, 
         customer_id: receipt.customer_id,
         invoice_id: receipt.invoice_id,
         confirmed_at: payment.created_at,
+        verified_at: payment.verified_at?.toISOString() ?? null,
         customer_name,
         invoice_receipt_number,
         payment_method: payment.payment_method,

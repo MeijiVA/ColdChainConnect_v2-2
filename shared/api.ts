@@ -615,7 +615,7 @@ export interface ExpenseResponse {
   expense: Expense;
 }
 
-/** One row of GET /api/payments/unverified: a collected payment awaiting Accounting. */
+/** One row of GET /api/payments/unverified: a collected payment, awaiting or already past Accounting. */
 export interface UnverifiedPayment {
   id: string;
   receipt_id: string;
@@ -624,6 +624,8 @@ export interface UnverifiedPayment {
   customer_id: string;
   invoice_id: string;
   confirmed_at: string;
+  /** Set once Accounting has verified the payment. */
+  verified_at?: string | null;
   customer_name: string;
   invoice_receipt_number: string;
   payment_method: string | null;

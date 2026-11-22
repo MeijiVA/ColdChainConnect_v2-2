@@ -147,6 +147,21 @@ describe("GET /api/payments/unverified", () => {
     expect((body as Row[]).map((r) => r.id).sort()).toEqual(["pay-full", "pay-overpaid", "pay-partial"]);
   });
 
+  it("filters by status: accomplished lists verified payments, all lists everything", async () => {
+    const withStatus = (status: string) => ({ ...asAccounting(), query: { status } }) as unknown as AuthRequest;
+    const accomplished = await run(list, withStatus("accomplished"));
+    expect(accomplished.status).toBe(200);
+    expect((accomplished.body as Row[]).map((r) => r.id)).toEqual(["pay-verified"]);
+    expect((accomplished.body as Row[])[0].verified_at).toEqual(expect.any(String));
+    const all = await run(list, withStatus("all"));
+    expect((all.body as Row[]).map((r) => r.id).sort()).toEqual(["pay-full", "pay-overpaid", "pay-partial", "pay-verified"]);
+  });
+
+  it("rejects an unknown status", async () => {
+    const req = { ...asAccounting(), query: { status: "pending" } } as unknown as AuthRequest;
+    expect((await run(list, req)).status).toBe(400);
+  });
+
   it("shows what accounting needs to check a row", async () => {
     const { body } = await run(list, asAccounting());
     const rows = body as Row[];

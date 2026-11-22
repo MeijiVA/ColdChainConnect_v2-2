@@ -238,7 +238,7 @@ export function DeliveryHistory() {
                           onClick={() => setViewReceipt(r)}
                           variant="outline" size="sm"
                         >
-                          View OR
+                          View Invoice
                         </Button>
                       </td>
                     </tr>

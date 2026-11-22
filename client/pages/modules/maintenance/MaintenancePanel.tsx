@@ -1,43 +1,35 @@
 import { useCallback, useEffect, useState } from "react";
-import { toast } from "sonner";
 import { Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { StatusBadge, type StatusTone } from "@/components/StatusBadge";
 import { useAuth } from "@/hooks/useAuth";
-import { useCan } from "@/hooks/useCan";
 import { useAutoRefresh } from "@/hooks/useAutoRefresh";
-import { confirmAction } from "@/lib/confirm";
-import type { MaintenanceRequest, MaintenanceRequestsResponse, MaintenanceStatus } from "@shared/api";
+import { formatPeso } from "@/lib/format";
+import { MAINTENANCE_EXPENSE_CATEGORY, type Expense, type ExpenseStatus, type ExpensesResponse } from "@shared/api";
 import { MaintenanceRequestForm } from "./MaintenanceRequestForm";
-import { MaintenanceRequestList } from "./MaintenanceRequestList";
 
-type StatusFilter = "all" | MaintenanceStatus;
-const statusFilters: StatusFilter[] = ["all", "submitted", "approved", "rejected"];
-
-async function errorMessage(res: Response, fallback: string) {
-  const body = await res.json().catch(() => ({}));
-  return (body as { error?: string }).error ?? fallback;
-}
+const STATUS_TONE: Record<ExpenseStatus, StatusTone> = {
+  submitted: "warning",
+  approved: "info",
+  paid: "success",
+  rejected: "danger",
+};
 
 export function MaintenancePanel() {
   const token = useAuth((state) => state.token);
-  const canRequest = useCan("maintenance:request");
-  const canDecide = useCan("maintenance:decide");
-
-  const [requests, setRequests] = useState<MaintenanceRequest[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const load = useCallback(async () => {
     if (!token) return;
     try {
-      const res = await fetch("/api/maintenance-requests", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/expenses", { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error("load failed");
-      const data = (await res.json()) as MaintenanceRequestsResponse;
-      setRequests(data.requests);
+      const data = (await res.json()) as ExpensesResponse;
+      setExpenses(data.expenses.filter((item) => item.category === MAINTENANCE_EXPENSE_CATEGORY));
       setError(null);
     } catch {
       setError("Failed to load maintenance requests.");
@@ -49,45 +41,14 @@ export function MaintenancePanel() {
   useEffect(() => { load(); }, [load]);
   useAutoRefresh(load, { enabled: Boolean(token) });
 
-  const decide = async (request: MaintenanceRequest, action: "approve" | "reject", rejectReason?: string) => {
-    if (!token) return;
-    const res = await fetch(`/api/maintenance-requests/${request.id}/${action}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(action === "reject" ? { reject_reason: rejectReason } : {}),
-    });
-    if (!res.ok) {
-      toast.error(await errorMessage(res, `Could not ${action} the request.`));
-    } else {
-      toast.success(action === "approve" ? "Request approved." : "Request rejected.");
-    }
-    await load();
-  };
-
-  const approve = async (request: MaintenanceRequest) => {
-    if (!(await confirmAction(`Approve maintenance for "${request.asset}"?`))) return;
-    await decide(request, "approve");
-  };
-
-  const reject = async (request: MaintenanceRequest) => {
-    const input = prompt(`Reason for rejecting "${request.asset}":`);
-    if (input === null) return;
-    if (!input.trim()) return void toast.error("A reason is required to reject a request.");
-    await decide(request, "reject", input.trim());
-  };
-
-  const visible = requests.filter((request) => statusFilter === "all" || request.status === statusFilter);
-
   return (
     <div className="flex-1 px-4 md:px-6 lg:px-7 py-4 md:py-6 overflow-y-auto space-y-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="page-title">Maintenance</h1>
-          <p className="page-subtitle">
-            {canDecide ? "Review maintenance requests for any equipment or vehicle" : "Ask for repairs on any equipment or vehicle"}
-          </p>
+          <p className="page-subtitle">Ask for repairs on any equipment or vehicle</p>
         </div>
-        {canRequest && !showForm && (
+        {!showForm && (
           <Button onClick={() => setShowForm(true)}>
             <Wrench size={15} /> New request
           </Button>
@@ -104,30 +65,23 @@ export function MaintenancePanel() {
         />
       )}
 
-      <ToggleGroup
-        type="single"
-        value={statusFilter}
-        onValueChange={(value) => { if (value) setStatusFilter(value as StatusFilter); }}
-        aria-label="Filter maintenance requests by status"
-        className="hide-scrollbar w-fit max-w-full justify-start overflow-x-auto rounded-full border border-border bg-card p-1"
-      >
-        {statusFilters.map((status) => (
-          <ToggleGroupItem key={status} value={status} variant="pill" size="sm" className="capitalize">
-            {status}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-
       {loading ? (
         <LoadingSpinner className="min-h-32" />
+      ) : expenses.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No maintenance requests yet.</p>
       ) : (
-        <MaintenanceRequestList
-          requests={visible}
-          canDecide={canDecide}
-          emptyMessage={requests.length === 0 ? "No maintenance requests yet." : "No requests match this filter."}
-          onApprove={approve}
-          onReject={reject}
-        />
+        <ul className="space-y-2">
+          {expenses.map((item) => (
+            <li key={item.id} className="bg-card border border-border rounded-2xl p-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-foreground break-words">{item.description}</p>
+                <p className="text-xs text-muted-foreground">{new Date(item.created_at).toLocaleDateString("en-PH")} · {formatPeso(item.amount)}</p>
+                {item.reject_reason && <p className="text-xs text-destructive">Rejected: {item.reject_reason}</p>}
+              </div>
+              <StatusBadge label={item.status} tone={STATUS_TONE[item.status]} />
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

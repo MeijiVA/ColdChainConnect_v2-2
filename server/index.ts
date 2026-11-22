@@ -124,14 +124,8 @@ import { getCustomerReport, getProfitReport, getSalesReport, getStockReport } fr
 import { authMiddleware, requireRole } from "./middleware/auth";
 import { requireAnyPermission, requirePermission, staffModuleGuard } from "./middleware/permissions";
 import { getPaymentReceipt, listPaymentAgents, listUnverifiedPayments, verifyReceiptPayment } from "./routes/payment-verification";
-import { createCashRemittance, listCashCollections } from "./routes/cash-remittances";
+import { createCashRemittance, listCashCollections, listMyUnconfirmedPayments } from "./routes/cash-remittances";
 import { approveExpense, createExpense, listExpenses, payExpense, rejectExpense } from "./routes/expenses";
-import {
-  approveMaintenanceRequest,
-  createMaintenanceRequest,
-  listMaintenanceRequests,
-  rejectMaintenanceRequest,
-} from "./routes/maintenance-requests";
 
 export function createServer() {
   const app = express();
@@ -279,10 +273,11 @@ export function createServer() {
   app.post("/api/payments/:id/verify", authMiddleware, requirePermission("payment:verify"), verifyReceiptPayment);
   app.get("/api/cash-remittances/collections", authMiddleware, requirePermission("cash:reconcile"), listCashCollections);
   app.post("/api/cash-remittances", authMiddleware, requirePermission("cash:reconcile"), createCashRemittance);
+  app.get("/api/cash-remittances/mine", authMiddleware, requireRole("agent"), listMyUnconfirmedPayments);
 
   // Expenses: submit, approve or reject, pay
-  app.get("/api/expenses", authMiddleware, requireAnyPermission("expense:submit", "expense:approve", "expense:pay"), listExpenses);
-  app.post("/api/expenses", authMiddleware, requirePermission("expense:submit"), createExpense);
+  app.get("/api/expenses", authMiddleware, requireAnyPermission("expense:submit", "expense:approve", "expense:pay", "maintenance:request"), listExpenses);
+  app.post("/api/expenses", authMiddleware, requireAnyPermission("expense:submit", "maintenance:request"), createExpense);
   app.post("/api/expenses/:id/approve", authMiddleware, requirePermission("expense:approve"), approveExpense);
   app.post("/api/expenses/:id/reject", authMiddleware, requirePermission("expense:approve"), rejectExpense);
   app.post("/api/expenses/:id/pay", authMiddleware, requirePermission("expense:pay"), payExpense);
@@ -302,10 +297,6 @@ export function createServer() {
   app.post("/api/agent-returns/:id/accept", authMiddleware, requireRole("admin"), acceptAgentReturn);
   app.post("/api/agent-returns/:id/reject", authMiddleware, requireRole("admin"), rejectAgentReturn);
 
-  app.get("/api/maintenance-requests", authMiddleware, requireAnyPermission("maintenance:request", "maintenance:decide"), listMaintenanceRequests);
-  app.post("/api/maintenance-requests", authMiddleware, requirePermission("maintenance:request"), createMaintenanceRequest);
-  app.post("/api/maintenance-requests/:id/approve", authMiddleware, requirePermission("maintenance:decide"), approveMaintenanceRequest);
-  app.post("/api/maintenance-requests/:id/reject", authMiddleware, requirePermission("maintenance:decide"), rejectMaintenanceRequest);
 
   // Inventory Batch routes
   app.get("/api/inventory-batches", authMiddleware, listInventoryBatches);

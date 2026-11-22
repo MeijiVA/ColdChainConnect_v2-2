@@ -1,13 +1,14 @@
 import type { RequestHandler } from "express";
-import { eq } from "drizzle-orm";
+import { eq, isNotNull, ne } from "drizzle-orm";
 import { db } from "../db";
-import { accounts_receivable, deliveries, drivers } from "../db/schema";
+import { accounts_receivable, delivery_items, deliveries, drivers } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
 import { isIsoDate, todayIsoDate } from "../services/schedule-date";
 
 export const getDriverSchedule: RequestHandler = async (req: AuthRequest, res) => {
+  const unconfirmedOnly = req.query.scope === "unconfirmed";
   const date = typeof req.query.date === "string" ? req.query.date : todayIsoDate();
-  if (!isIsoDate(date)) {
+  if (!unconfirmedOnly && !isIsoDate(date)) {
     return res.status(400).json({ error: "date must be YYYY-MM-DD" });
   }
 
@@ -38,10 +39,13 @@ export const getDriverSchedule: RequestHandler = async (req: AuthRequest, res) =
     }
 
     const scheduledRuns = await db.query.deliveries.findMany({
-      where: eq(deliveries.scheduled_date, date),
+      where: unconfirmedOnly
+        ? isNotNull(deliveries.scheduled_date)
+        : eq(deliveries.scheduled_date, date),
       with: {
         truck: true,
         delivery_items: {
+          where: unconfirmedOnly ? ne(delivery_items.status, "completed") : undefined,
           with: {
             destination_customer: true,
             invoice: { with: { invoice_items: true } },
@@ -58,9 +62,10 @@ export const getDriverSchedule: RequestHandler = async (req: AuthRequest, res) =
           ...stop,
           outstanding_amount: receivables.reduce((sum, record) => sum + Number(record.amount_due), 0),
         })),
-      }));
+      }))
+      .filter((run) => !unconfirmedOnly || run.delivery_items.length > 0);
 
-    res.json({ date, driver, deliveries: runs });
+    res.json({ date: unconfirmedOnly ? null : date, driver, deliveries: runs });
   } catch (error) {
     console.error("Error fetching driver schedule:", error);
     res.status(500).json({ error: "Internal server error" });

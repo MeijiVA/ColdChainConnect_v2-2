@@ -2,7 +2,7 @@ import type { RequestHandler } from "express";
 import { randomUUID } from "crypto";
 import { and, desc, eq, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { CreateExpenseSchema } from "../../shared/api";
+import { CreateExpenseSchema, MAINTENANCE_EXPENSE_CATEGORY } from "../../shared/api";
 import { db } from "../db";
 import { expenses, users } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
@@ -30,16 +30,21 @@ function expenseSummary(row: typeof expenses.$inferSelect) {
   };
 }
 
+function isMaintenanceOnlyRole(role: string | undefined): boolean {
+  return role === "agent" || role === "driver";
+}
+
 function nonEmpty(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 // ─── GET /api/expenses ────────────────────────────────────────────────────────
 
-export const listExpenses: RequestHandler = async (_req: AuthRequest, res) => {
+export const listExpenses: RequestHandler = async (req: AuthRequest, res) => {
   try {
     if (!process.env.DATABASE_URL) return res.json({ expenses: [] });
 
+    const maintenanceOnly = isMaintenanceOnlyRole(req.user?.role);
     const rows = await db
       .select({
         expense: expenses,
@@ -51,6 +56,11 @@ export const listExpenses: RequestHandler = async (_req: AuthRequest, res) => {
       .leftJoin(submitter, eq(submitter.id, expenses.submitted_by))
       .leftJoin(approver, eq(approver.id, expenses.approved_by))
       .leftJoin(payer, eq(payer.id, expenses.paid_by))
+      .where(
+        maintenanceOnly
+          ? and(eq(expenses.submitted_by, req.user!.userId), eq(expenses.category, MAINTENANCE_EXPENSE_CATEGORY))
+          : undefined,
+      )
       .orderBy(desc(expenses.created_at), desc(expenses.id));
 
     res.json({
@@ -78,6 +88,9 @@ export const createExpense: RequestHandler = async (req: AuthRequest, res) => {
   const description = nonEmpty(body.description);
   if (!category) return res.status(400).json({ error: "Category is required" });
   if (!description) return res.status(400).json({ error: "Description is required" });
+  if (isMaintenanceOnlyRole(req.user.role) && category !== MAINTENANCE_EXPENSE_CATEGORY) {
+    return res.status(403).json({ error: "You can only submit maintenance expenses" });
+  }
 
   // Amounts arrive as decimal strings; a plain JSON number is accepted too.
   const rawAmount = typeof body.amount === "number" && Number.isFinite(body.amount) ? String(body.amount) : body.amount;
@@ -136,12 +149,13 @@ function reviewExpense(decision: ReviewDecision): RequestHandler {
       if (existing.status !== "submitted") {
         return res.status(409).json({ error: `Only a submitted expense can be ${verb}` });
       }
-      if (existing.submitted_by === userId) {
+      const selfReviewAllowed = existing.category === MAINTENANCE_EXPENSE_CATEGORY;
+      if (existing.submitted_by === userId && !selfReviewAllowed) {
         return res.status(409).json({ error: `You cannot ${decision} an expense you submitted` });
       }
 
       const now = new Date();
-      // Conditional on still being submitted (and not ours), so simultaneous decisions cannot both win.
+      // Conditional on still being submitted (and not ours, unless it is maintenance), so simultaneous decisions cannot both win.
       const updated = await db
         .update(expenses)
         .set(
@@ -149,7 +163,7 @@ function reviewExpense(decision: ReviewDecision): RequestHandler {
             ? { status: "approved", approved_by: userId, approved_at: now, updated_at: now }
             : { status: "rejected", approved_by: userId, approved_at: now, reject_reason: reason, updated_at: now },
         )
-        .where(and(eq(expenses.id, id), eq(expenses.status, "submitted"), ne(expenses.submitted_by, userId)))
+        .where(and(eq(expenses.id, id), eq(expenses.status, "submitted"), selfReviewAllowed ? undefined : ne(expenses.submitted_by, userId)))
         .returning();
 
       if (updated.length === 0) {

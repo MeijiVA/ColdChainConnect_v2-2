@@ -46,6 +46,48 @@ class PaymentConflict extends Error {
   }
 }
 
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+function newReceiptNumber() {
+  const datePart = new Date()
+    .toISOString()
+    .slice(0, 10)
+    .replace(/-/g, "");
+  const suffix = randomUUID().slice(0, 4).toUpperCase();
+  return `OR-${datePart}-${suffix}`;
+}
+
+async function issueReceipt(
+  tx: Tx,
+  values: {
+    receiptNumber: string;
+    itemId: string;
+    customerId: string;
+    truckId: string | null;
+    invoiceId: string;
+    confirmedBy: string | null;
+    confirmedAt: Date;
+    cashCollectedAmount: string;
+    paymentReference: string | null;
+    notes: string | null;
+  },
+) {
+  const [receipt] = await tx.insert(receipts).values({
+    id: randomUUID(),
+    receipt_number: values.receiptNumber,
+    delivery_item_id: values.itemId,
+    customer_id: values.customerId,
+    truck_id: values.truckId,
+    invoice_id: values.invoiceId,
+    confirmed_by: values.confirmedBy,
+    notes: values.notes,
+    payment_reference: values.paymentReference,
+    cash_collected_amount: values.cashCollectedAmount,
+    confirmed_at: values.confirmedAt,
+  }).returning();
+  return receipt;
+}
+
 // ─── POST /api/deliveries/:id/items/:itemId/confirm ───────────────────────────
 // Called by the mobile app (or the admin UI) to confirm a delivery stop.
 // Side-effects:
@@ -154,16 +196,9 @@ export const confirmDeliveryItem: RequestHandler = async (
       return res.status(409).json({ error: "All pallets for this order must be shipped before delivery confirmation" });
     }
 
-    // 4. Generate receipt number: OR-YYYYMMDD-XXXX
+    // Receipts are only issued for money actually collected; an unpaid stop keeps its invoice and AR.
     const now = new Date();
-    const datePart = now
-      .toISOString()
-      .slice(0, 10)
-      .replace(/-/g, "");
-    const suffix = randomUUID().slice(0, 4).toUpperCase();
-    const receiptNumber = `OR-${datePart}-${suffix}`;
-
-    const receiptId = randomUUID();
+    const receiptNumber = collectedCents > 0 ? newReceiptNumber() : null;
 
     let newReceipt;
     try {
@@ -184,21 +219,20 @@ export const confirmDeliveryItem: RequestHandler = async (
           updated_at: now,
         }).where(eq(delivery_items.id, itemId));
 
-        const [createdReceipt] = await tx.insert(receipts).values({
-          id: receiptId,
-          receipt_number: receiptNumber,
-          delivery_item_id: itemId,
-          customer_id: item.destination_customer_id,
-          truck_id: delivery.truck_id,
-          invoice_id: item.invoice_id,
-          confirmed_by: req.user?.userId ?? null,
-          notes: notes ?? null,
-          payment_reference: collectedCents > 0 ? (payment_reference ?? null) : null,
-          cash_collected_amount: (collectedCents / 100).toFixed(2),
-          confirmed_at: now,
-        }).returning();
-
-        if (collectedCents > 0) {
+        let createdReceipt: Awaited<ReturnType<typeof issueReceipt>> | null = null;
+        if (receiptNumber) {
+          createdReceipt = await issueReceipt(tx, {
+            receiptNumber,
+            itemId,
+            customerId: item.destination_customer_id,
+            truckId: delivery.truck_id,
+            invoiceId: item.invoice_id,
+            confirmedBy: req.user?.userId ?? null,
+            confirmedAt: now,
+            cashCollectedAmount: (collectedCents / 100).toFixed(2),
+            paymentReference: payment_reference ?? null,
+            notes: notes ?? null,
+          });
           await tx.insert(receipt_payment_entries).values({
             id: randomUUID(),
             receipt_id: createdReceipt.id,
@@ -287,7 +321,7 @@ export const confirmDeliveryItem: RequestHandler = async (
 
     // Answer with the row just written: a read-back after the commit could fail and report an
     // error for a confirmation that went through.
-    res.status(201).json(newReceipt);
+    res.status(201).json(newReceipt ?? { delivery_item_id: itemId, invoice_id: item.invoice_id, receipt_number: null });
   } catch (error) {
     console.error("Error confirming delivery item:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -372,14 +406,14 @@ export const recordDeliveryItemPayment: RequestHandler = async (
       result = await db.transaction(async (tx) => {
         const [lockedItem] = await tx.select({ is_paid: delivery_items.is_paid }).from(delivery_items)
           .where(eq(delivery_items.id, itemId)).for("update");
+        if (!lockedItem) throw new PaymentConflict(404, "Delivery item not found");
         const [existingReceipt] = await tx.select().from(receipts)
           .where(eq(receipts.delivery_item_id, itemId)).limit(1).for("update");
-        if (!lockedItem || !existingReceipt) throw new PaymentConflict(409, "Receipt not found for this delivery item");
 
         const [priorPayment] = await tx.select().from(receipt_payment_entries)
           .where(eq(receipt_payment_entries.idempotency_key, payment_id)).limit(1);
         if (priorPayment) {
-          if (priorPayment.receipt_id !== existingReceipt.id) throw new PaymentConflict(409, "Payment ID has already been used");
+          if (!existingReceipt || priorPayment.receipt_id !== existingReceipt.id) throw new PaymentConflict(409, "Payment ID has already been used");
           return { paymentCents: 0, remainingCents: 0, overpaidCents: 0, isFullyPaid: lockedItem.is_paid ?? false, duplicate: true };
         }
         if (lockedItem.is_paid) throw new PaymentConflict(409, "Payment is already recorded for this delivery item");
@@ -399,9 +433,24 @@ export const recordDeliveryItemPayment: RequestHandler = async (
         const isFullyPaid = remainingCents === 0;
         const now = new Date();
 
-        const totalCollectedCents = Math.round(Number(existingReceipt.cash_collected_amount) * 100) + paymentCents;
+        // An unpaid stop has no receipt yet; the first confirmed payment issues it.
+        const receipt = existingReceipt ?? await issueReceipt(tx, {
+          receiptNumber: newReceiptNumber(),
+          itemId,
+          customerId: item.destination_customer_id,
+          truckId: delivery.truck_id,
+          invoiceId: item.invoice_id,
+          confirmedBy: req.user?.userId ?? null,
+          confirmedAt: now,
+          cashCollectedAmount: "0.00",
+          paymentReference: null,
+          notes: null,
+        });
+
+        const totalCollectedCents = Math.round(Number(receipt.cash_collected_amount) * 100) + paymentCents;
 
         await tx.update(delivery_items).set({
+          receipt_number: receipt.receipt_number,
           is_paid: isFullyPaid,
           payment_method,
           payment_reference: payment_reference ?? null,
@@ -412,11 +461,11 @@ export const recordDeliveryItemPayment: RequestHandler = async (
         await tx.update(receipts).set({
           payment_reference: payment_reference ?? null,
           cash_collected_amount: (totalCollectedCents / 100).toFixed(2),
-        }).where(eq(receipts.delivery_item_id, itemId));
+        }).where(eq(receipts.id, receipt.id));
 
         await tx.insert(receipt_payment_entries).values({
           id: randomUUID(),
-          receipt_id: existingReceipt.id,
+          receipt_id: receipt.id,
           idempotency_key: payment_id,
           amount: (paymentCents / 100).toFixed(2),
           payment_method,
@@ -440,7 +489,7 @@ export const recordDeliveryItemPayment: RequestHandler = async (
             amount_due: (-overpaidCents / 100).toFixed(2),
             credit_type: "overpayment",
             status: "outstanding",
-            notes: `Delivery overpayment on ${existingReceipt.receipt_number}; available for a future order.`,
+            notes: `Delivery overpayment on ${receipt.receipt_number}; available for a future order.`,
           });
         }
 

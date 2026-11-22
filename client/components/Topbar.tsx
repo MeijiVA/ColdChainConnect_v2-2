@@ -156,7 +156,7 @@ export function Topbar({ userName, onLogout }: TopbarProps) {
         </div>
       </div>
 
-        {role !== "agent" && (
+        {role !== "agent" && role !== "driver" && (
           <form
             onSubmit={handleSearch}
             onBlur={(event) => {

@@ -557,10 +557,11 @@ function ReturnsView() {
 
 export function AgentReports() {
   const canRequestMaintenance = useCan("maintenance:request");
+  const canDecideMaintenance = useCan("maintenance:decide");
   const [params, setParams] = useSearchParams();
   const showMaintenance = canRequestMaintenance && params.get("view") === "maintenance";
 
-  if (!canRequestMaintenance) return <ReturnsView />;
+  if (!canRequestMaintenance || canDecideMaintenance) return <ReturnsView />;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

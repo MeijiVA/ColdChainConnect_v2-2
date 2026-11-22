@@ -558,26 +558,6 @@ export const agent_returns = pgTable("agent_returns", {
   index("agent_returns_product_id_idx").on(table.product_id),
 ]);
 
-// Maintenance requests — agents and drivers ask for equipment repair; an admin approves or rejects
-export const maintenance_requests = pgTable("maintenance_requests", {
-  id: text("id").primaryKey(),
-  asset: varchar("asset", { length: 120 }).notNull(),
-  description: text("description").notNull(),
-  status: varchar("status", { length: 20 }).notNull().default("submitted"),
-  requested_by: text("requested_by")
-    .notNull()
-    .references(() => users.id),
-  reviewed_by: text("reviewed_by").references(() => users.id),
-  reviewed_at: timestamp("reviewed_at"),
-  reject_reason: text("reject_reason"),
-  created_at: timestamp("created_at").defaultNow().notNull(),
-  updated_at: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => [
-  index("maintenance_requests_requested_by_idx").on(table.requested_by),
-  index("maintenance_requests_status_idx").on(table.status),
-  check("maintenance_requests_status_check", sql`${table.status} IN ('submitted', 'approved', 'rejected')`),
-]);
-
 // Audit logs table
 export const audit_logs = pgTable("audit_logs", {
   id: text("id").primaryKey(),

@@ -19,6 +19,7 @@ import { Topbar } from "./components/Topbar";
 import { AdminMobileNavigation, AdminNavigation } from "./components/AdminNavigation";
 import { PostLoginLoadingScreen } from "./components/auth/PostLoginLoadingScreen";
 import { BottomNavBar } from "./components/BottomNavBar";
+import { DriverBottomNav } from "./components/driver/DriverBottomNav";
 import NotFound from "./pages/NotFound";
 import { PageSkeleton, RouteBoundary } from "./components/shared/RouteBoundary";
 
@@ -33,6 +34,7 @@ const AuditLogPage = named(() => import("./pages/AuditLog"), "AuditLogPage");
 const Accounting = named(() => import("./pages/Accounting"), "Accounting");
 const Reports = named(() => import("./pages/Reports"), "Reports");
 const SearchResults = named(() => import("./pages/SearchResults"), "SearchResults");
+const MaintenancePanel = named(() => import("./pages/modules/maintenance/MaintenancePanel"), "MaintenancePanel");
 const DriverSchedule = named(() => import("./pages/DriverSchedule"), "DriverSchedule");
 
 const queryClient = new QueryClient({
@@ -69,6 +71,19 @@ const AgentLayout = ({ agentMode = false }: { agentMode?: boolean }) => {
       <div className={`flex-1 flex flex-col bg-background min-w-0 ${agentMode ? "min-h-0" : ""}`}>
         <RouteBoundary><Outlet /></RouteBoundary>
       </div>
+    </div>
+  );
+};
+
+const DriverLayout = () => {
+  const { logout, user } = useAuth();
+  return (
+    <div className="flex min-h-screen flex-col">
+      <Topbar userName={user?.username || "User"} onLogout={logout} />
+      <div className="flex min-w-0 flex-1 flex-col bg-background pb-24">
+        <RouteBoundary><Outlet /></RouteBoundary>
+      </div>
+      <DriverBottomNav />
     </div>
   );
 };
@@ -131,8 +146,9 @@ const AppContent = () => {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route element={<AgentLayout />}>
+        <Route element={<DriverLayout />}>
           <Route path="/driver-schedule" element={<DriverSchedule />} />
+          <Route path="/driver-maintenance" element={<MaintenancePanel />} />
         </Route>
         <Route path="*" element={<Navigate to="/driver-schedule" replace />} />
       </Routes>

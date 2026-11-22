@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type {
   AgentScheduleDelivery,
+  MyCashPayment,
   AgentScheduleResponse,
   AgentScheduleStop,
 } from "@shared/api";
@@ -23,7 +24,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { optimizeRouteOrder } from "@/lib/routeOrder";
-import { localScheduleDate, statusClasses, unconfirmedPayment } from "@/lib/agentSchedule";
+import { localScheduleDate, statusClasses } from "@/lib/agentSchedule";
 import { DeliveryRouteMap, type MapFocus } from "@/components/DeliveryRouteMap";
 import { AgentStopDetailDialog } from "@/components/AgentStopDetailDialog";
 import { DeliveryPaymentPrompt } from "@/components/shared/DeliveryPaymentPrompt";
@@ -139,6 +140,8 @@ export function AgentDeliverySchedule() {
     stop: AgentScheduleStop;
   } | null>(null);
   const [showUnconfirmed, setShowUnconfirmed] = useState(false);
+  const [myCashPayments, setMyCashPayments] = useState<MyCashPayment[]>([]);
+  const [showPaymentHistory, setShowPaymentHistory] = useState(false);
 
   const fetchSchedule = async () => {
     if (!token) return;
@@ -240,14 +243,46 @@ export function AgentDeliverySchedule() {
       );
   }, [view, visibleDeliveries]);
 
-  const unconfirmedStops = deliveries.flatMap((delivery) =>
-    (delivery.delivery_items ?? []).flatMap((stop) => {
-      const payment = unconfirmedPayment(stop);
-      return payment ? [{ delivery, stop, payment }] : [];
-    }),
+  useEffect(() => {
+    if (!token) return;
+    fetch("/api/cash-remittances/mine", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((response) => (response.ok ? response.json() : []))
+      .then((payments: MyCashPayment[]) => setMyCashPayments(payments))
+      .catch(() => setMyCashPayments([]));
+  }, [token, showUnconfirmed]);
+
+  const unconfirmedTotal = myCashPayments.reduce(
+    (total, payment) => total + Number(payment.amount),
+    0,
   );
-  const unconfirmedTotal = unconfirmedStops.reduce(
-    (total, { payment }) => total + payment.amount,
+
+  const paymentHistoryStops = deliveries
+    .flatMap((delivery) =>
+      (delivery.delivery_items ?? [])
+        .filter(
+          (stop) =>
+            stop.status === "completed" &&
+            !stop.is_paid &&
+            (stop.outstanding_amount ?? 0) > 0,
+        )
+        .map((stop) => {
+          const amountDue =
+            Number(stop.invoice?.total_amount ?? 0) -
+            Number(stop.invoice?.credit_applied_amount ?? 0);
+          return {
+            delivery,
+            stop,
+            isPartiallyPaid: (stop.outstanding_amount ?? 0) < amountDue,
+          };
+        }),
+    )
+    .sort((a, b) =>
+      (b.delivery.scheduled_date ?? "").localeCompare(a.delivery.scheduled_date ?? ""),
+    );
+  const paymentHistoryTotal = paymentHistoryStops.reduce(
+    (total, { stop }) => total + (stop.outstanding_amount ?? 0),
     0,
   );
 
@@ -348,6 +383,14 @@ export function AgentDeliverySchedule() {
               Your assigned delivery runs, destinations, and stop details
             </p>
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-10"
+            onClick={() => setShowPaymentHistory(true)}
+          >
+            Partially paid &amp; unpaid ({paymentHistoryStops.length})
+          </Button>
         </div>
 
         <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -364,7 +407,8 @@ export function AgentDeliverySchedule() {
               <span className="font-semibold text-foreground">
                 {formatPeso(unconfirmedTotal)}
               </span>
-              · {unconfirmedStops.length} stops
+              · {myCashPayments.length}{" "}
+              {myCashPayments.length === 1 ? "payment" : "payments"}
               {showUnconfirmed ? (
                 <ChevronUp size={16} />
               ) : (
@@ -373,37 +417,28 @@ export function AgentDeliverySchedule() {
             </span>
           </button>
           {showUnconfirmed &&
-            (unconfirmedStops.length === 0 ? (
+            (myCashPayments.length === 0 ? (
               <p className="mt-2 text-xs text-muted-foreground">
-                No unconfirmed payments.
+                No cash waiting to be handed over.
               </p>
             ) : (
               <ul className="divide-y divide-border">
-                {unconfirmedStops.map(({ delivery, stop, payment }) => (
+                {myCashPayments.map((payment) => (
                   <li
-                    key={stop.id}
+                    key={payment.id}
                     className="flex items-center justify-between gap-3 py-2"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-foreground">
-                        {stop.destination_customer?.store_name ??
-                          "Unknown customer"}
+                      <p className="text-sm font-semibold text-foreground">
+                        {payment.customer_name ?? "Customer"}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {stop.invoice?.receipt_number
-                          ? `Invoice ${stop.invoice.receipt_number}`
-                          : "Invoice"}{" "}
-                        · {formatPeso(payment.amount)} · {payment.label}
+                        Order {payment.order_number} · {payment.business_date}
                       </p>
                     </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setDetailTarget({ delivery, stop })}
-                    >
-                      View
-                    </Button>
+                    <span className="text-sm font-semibold text-foreground">
+                      {formatPeso(Number(payment.amount))}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -645,6 +680,68 @@ export function AgentDeliverySchedule() {
           </div>
         )}
       </div>
+
+      {showPaymentHistory && (
+        <PageDialog
+          label="Partially paid and unpaid"
+          onClose={() => setShowPaymentHistory(false)}
+        >
+          <div className="flex flex-col gap-4 p-5">
+            <div>
+              <h2 className="text-lg font-bold text-foreground">
+                Partially paid &amp; unpaid
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {formatPeso(paymentHistoryTotal)} remaining across{" "}
+                {paymentHistoryStops.length}{" "}
+                {paymentHistoryStops.length === 1 ? "delivery" : "deliveries"}
+              </p>
+            </div>
+            {paymentHistoryStops.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No partially paid or unpaid deliveries.
+              </p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {paymentHistoryStops.map(({ delivery, stop, isPartiallyPaid }) => (
+                  <li
+                    key={stop.id}
+                    className="flex flex-wrap items-center justify-between gap-3 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-foreground">
+                        {stop.destination_customer?.store_name ?? "Customer"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {delivery.scheduled_date ?? "No date"} · Order{" "}
+                        {stop.invoice?.booking_id?.slice(0, 8).toUpperCase() ?? "—"}
+                        {stop.invoice?.receipt_number
+                          ? ` · Invoice ${stop.invoice.receipt_number}`
+                          : ""}
+                        {" · "}
+                        {isPartiallyPaid ? "Partially paid" : "Unpaid"} ·{" "}
+                        {formatPeso(stop.outstanding_amount ?? 0)} remaining
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="success"
+                      className="min-h-10"
+                      disabled={confirmingStopId === stop.id}
+                      onClick={() => {
+                        setShowPaymentHistory(false);
+                        setPaymentStop({ delivery, stop, mode: "payment" });
+                      }}
+                    >
+                      Record payment
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </PageDialog>
+      )}
 
       {paymentStop && (
         <PageDialog onClose={() => setPaymentStop(null)}>

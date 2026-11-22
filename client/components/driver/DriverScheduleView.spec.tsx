@@ -11,6 +11,7 @@ const schedule = (status: "pending" | "completed"): DriverSchedule => ({
   deliveries: [
     {
       id: "del-1",
+      scheduled_date: "2026-11-19",
       status: "pending",
       truck: { id: "t1", license_plate: "AAA-111", district: "d" },
       delivery_items: [

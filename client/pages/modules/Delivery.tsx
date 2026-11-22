@@ -7,6 +7,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { toast } from "sonner";
 import { confirmAction } from "@/lib/confirm";
 import React, { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import { useCan } from "@/hooks/useCan";
 import { Table } from "@/components/ui/table";
@@ -61,6 +62,30 @@ function invoiceStatusTone(status: string): StatusTone {
   return status === "paid" ? "success" : "warning";
 }
 
+function hasUnpaidInvoice(item: DeliveryItemExt) {
+  return Boolean(item.invoice) && item.invoice!.payment_status !== "paid";
+}
+
+function StopTitle({ item }: { item: DeliveryItemExt }) {
+  const name = item.customer?.store_name ?? item.destination_customer_id.slice(0, 8);
+  const orderId = item.invoice?.booking_id;
+  if (!orderId) return <>{name}</>;
+  return (
+    <Link
+      to={`/booking-dispatch/inventory?order=${encodeURIComponent(orderId)}`}
+      title="View this order's pallets"
+      className="hover:underline"
+    >
+      {name}
+    </Link>
+  );
+}
+
+function UnpaidBadge({ item, className }: { item: DeliveryItemExt; className?: string }) {
+  if (!hasUnpaidInvoice(item)) return null;
+  return <StatusBadge label={item.invoice!.payment_status === "partial" ? "Partially paid" : "Unpaid"} tone="danger" className={className} />;
+}
+
 function formatRunDate(delivery: Delivery) {
   if (!delivery.scheduled_date) return new Date(delivery.created_at).toLocaleDateString("en-PH");
   const [year, month, day] = delivery.scheduled_date.split("-").map(Number);
@@ -107,6 +132,7 @@ export function DeliveryDispatch() {
   const [scheduleFromDate, setScheduleFromDate] = useState("");
   const [scheduleDriverFilter, setScheduleDriverFilter] = useState("all");
   const [scheduleAgentFilter, setScheduleAgentFilter] = useState("all");
+  const [schedulePaymentFilter, setSchedulePaymentFilter] = useState<"all" | "unpaid">("all");
   const [showAddTruckModal,    setShowAddTruckModal]    = useState(false);
   const [showEditTruckModal,   setShowEditTruckModal]   = useState(false);
   const [showAddDeliveryModal, setShowAddDeliveryModal] = useState(false);
@@ -198,6 +224,7 @@ export function DeliveryDispatch() {
     return matchesSearch &&
       (!scheduleFromDate || scheduledDate >= scheduleFromDate) &&
       (scheduleDriverFilter === "all" || driverId === scheduleDriverFilter) &&
+      (schedulePaymentFilter === "all" || delivery.delivery_items.some(hasUnpaidInvoice)) &&
       (scheduleAgentFilter === "all" || (delivery.agent_id ?? delivery.agent?.id) === scheduleAgentFilter);
   });
   const sortedScheduleDays = [...filteredTruckDeliveries.reduce((groups, delivery) => {
@@ -473,6 +500,10 @@ export function DeliveryDispatch() {
                 <option value="all">All agents</option>
                 {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.full_name || agent.user?.username || agent.id.slice(0, 8)}</option>)}
               </NativeSelect>
+              <NativeSelect aria-label="Filter by payment" value={schedulePaymentFilter} onChange={(event) => setSchedulePaymentFilter(event.target.value as "all" | "unpaid")} className="shrink-0">
+                <option value="all">All payments</option>
+                <option value="unpaid">With unpaid orders</option>
+              </NativeSelect>
             </div>
 
             {sortedScheduleDays.length === 0 ? (
@@ -502,6 +533,9 @@ export function DeliveryDispatch() {
                 <StatusBadge label={statusLabel(delivery.status)} tone={runStatusTone(delivery.status)} className="flex-shrink-0" />
                 <span className="font-mono text-xs text-muted-foreground truncate">{delivery.id.slice(0, 8)}…</span>
                 <span className="text-xs text-muted-foreground flex-shrink-0">{delivery.delivery_items.length} stop{delivery.delivery_items.length !== 1 ? "s" : ""}</span>
+                {delivery.delivery_items.some(hasUnpaidInvoice) && (
+                  <StatusBadge label={`${delivery.delivery_items.filter(hasUnpaidInvoice).length} unpaid`} tone="danger" className="flex-shrink-0" />
+                )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                 <span className="text-xs text-muted-foreground hidden sm:block">
@@ -550,7 +584,7 @@ export function DeliveryDispatch() {
                         <div key={item.id} className="p-4 space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="font-semibold text-foreground text-sm">
-                              {item.customer?.store_name ?? item.destination_customer_id.slice(0, 8)}
+                              <StopTitle item={item} />
                             </span>
                             <StatusBadge label={statusLabel(item.status)} tone={runStatusTone(item.status)} />
                           </div>
@@ -562,6 +596,7 @@ export function DeliveryDispatch() {
                             {item.invoice && (
                               <StatusBadge label={item.invoice.status} tone={invoiceStatusTone(item.invoice.status)} />
                             )}
+                            <UnpaidBadge item={item} />
                           </div>
                           {item.receipt_number && (
                             <p className="text-xs text-muted-foreground">Receipt: {item.receipt_number}</p>
@@ -621,7 +656,8 @@ export function DeliveryDispatch() {
                                 )}
                               </td>
                               <td className="px-3 py-3 text-foreground font-semibold">
-                                {item.customer?.store_name ?? item.destination_customer_id.slice(0, 8)}
+                                <StopTitle item={item} />
+                                <UnpaidBadge item={item} className="ml-2" />
                                 {item.customer && (
                                   <p className="text-muted-foreground font-normal">{formatCustomerAddress(item.customer)}</p>
                                 )}

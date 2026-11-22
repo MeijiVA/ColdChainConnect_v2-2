@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import type {
   AgentScheduleDelivery,
-  MyCashDay,
+  MyCashPayment,
   AgentScheduleResponse,
   AgentScheduleStop,
 } from "@shared/api";
@@ -140,7 +140,7 @@ export function AgentDeliverySchedule() {
     stop: AgentScheduleStop;
   } | null>(null);
   const [showUnconfirmed, setShowUnconfirmed] = useState(false);
-  const [myCashDays, setMyCashDays] = useState<MyCashDay[]>([]);
+  const [myCashPayments, setMyCashPayments] = useState<MyCashPayment[]>([]);
   const [showPartiallyUnpaid, setShowPartiallyUnpaid] = useState(false);
 
   const fetchSchedule = async () => {
@@ -249,13 +249,12 @@ export function AgentDeliverySchedule() {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((response) => (response.ok ? response.json() : []))
-      .then((days: MyCashDay[]) => setMyCashDays(days))
-      .catch(() => setMyCashDays([]));
+      .then((payments: MyCashPayment[]) => setMyCashPayments(payments))
+      .catch(() => setMyCashPayments([]));
   }, [token, showUnconfirmed]);
 
-  const unconfirmedDays = myCashDays.filter((day) => !day.handed_over);
-  const unconfirmedTotal = unconfirmedDays.reduce(
-    (total, day) => total + Number(day.expected),
+  const unconfirmedTotal = myCashPayments.reduce(
+    (total, payment) => total + Number(payment.amount),
     0,
   );
 
@@ -387,7 +386,8 @@ export function AgentDeliverySchedule() {
               <span className="font-semibold text-foreground">
                 {formatPeso(unconfirmedTotal)}
               </span>
-              · {unconfirmedDays.length} days
+              · {myCashPayments.length}{" "}
+              {myCashPayments.length === 1 ? "payment" : "payments"}
               {showUnconfirmed ? (
                 <ChevronUp size={16} />
               ) : (
@@ -396,29 +396,27 @@ export function AgentDeliverySchedule() {
             </span>
           </button>
           {showUnconfirmed &&
-            (unconfirmedDays.length === 0 ? (
+            (myCashPayments.length === 0 ? (
               <p className="mt-2 text-xs text-muted-foreground">
                 No cash waiting to be handed over.
               </p>
             ) : (
               <ul className="divide-y divide-border">
-                {unconfirmedDays.map((day) => (
+                {myCashPayments.map((payment) => (
                   <li
-                    key={day.business_date}
+                    key={payment.id}
                     className="flex items-center justify-between gap-3 py-2"
                   >
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-foreground">
-                        {day.business_date}
+                        {payment.customer_name ?? "Customer"}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {day.payment_count}{" "}
-                        {day.payment_count === 1 ? "payment" : "payments"} · Not
-                        yet handed over
+                        Order {payment.order_number} · {payment.business_date}
                       </p>
                     </div>
                     <span className="text-sm font-semibold text-foreground">
-                      {formatPeso(Number(day.expected))}
+                      {formatPeso(Number(payment.amount))}
                     </span>
                   </li>
                 ))}

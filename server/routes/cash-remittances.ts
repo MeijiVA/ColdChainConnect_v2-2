@@ -2,10 +2,10 @@ import type { RequestHandler } from "express";
 import { randomUUID } from "crypto";
 import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import { db } from "../db";
-import { audit_logs, cash_remittances, users } from "../db/schema";
+import { audit_logs, cash_remittances, delivery_items, invoices, users } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
 import { logAction } from "../middleware/audit-logger";
-import { denominationTotalCents, todayInManila, type CashCollectionRow, type CashRemittance, type DenominationCounts, type MyCashDay } from "../../shared/api";
+import { denominationTotalCents, todayInManila, type CashCollectionRow, type CashRemittance, type DenominationCounts, type MyCashPayment } from "../../shared/api";
 
 // End-of-day cash: collectors (drivers, agents) record cash payments on deliveries during the day and
 // hand the cash to the office, which counts it by denomination and confirms here.
@@ -35,20 +35,26 @@ interface CashEntry {
   after_state: string | null;
 }
 
+/** The cash amount in centavos recorded by one audit entry, or null when it is not a cash payment. */
+function cashPaymentCents(afterState: string | null): number | null {
+  if (!afterState) return null;
+  let state: { payment_method?: unknown; payment_amount?: unknown };
+  try {
+    state = JSON.parse(afterState);
+  } catch {
+    return null;
+  }
+  if (state.payment_method !== "cash") return null;
+  const cents = Math.round(Number(state.payment_amount) * 100);
+  return Number.isFinite(cents) && cents > 0 ? cents : null;
+}
+
 /** Pure: sums the cash payments in audit entries per user, in centavos. */
 export function sumCashByUser(entries: CashEntry[]): Map<string, { cents: number; count: number }> {
   const totals = new Map<string, { cents: number; count: number }>();
   for (const entry of entries) {
-    if (!entry.after_state) continue;
-    let state: { payment_method?: unknown; payment_amount?: unknown };
-    try {
-      state = JSON.parse(entry.after_state);
-    } catch {
-      continue;
-    }
-    if (state.payment_method !== "cash") continue;
-    const cents = Math.round(Number(state.payment_amount) * 100);
-    if (!Number.isFinite(cents) || cents <= 0) continue;
+    const cents = cashPaymentCents(entry.after_state);
+    if (cents === null) continue;
     const current = totals.get(entry.user_id) ?? { cents: 0, count: 0 };
     current.cents += cents;
     current.count += 1;
@@ -150,7 +156,7 @@ export const listCashCollections: RequestHandler = async (req: AuthRequest, res)
 
 const MY_CASH_LOOKBACK_DAYS = 60;
 
-export const listMyCashDays: RequestHandler = async (req: AuthRequest, res) => {
+export const listMyUnconfirmedPayments: RequestHandler = async (req: AuthRequest, res) => {
   if (!req.user) return res.status(401).json({ error: "Authentication required" });
   if (!process.env.DATABASE_URL) return res.json([]);
 
@@ -161,7 +167,7 @@ export const listMyCashDays: RequestHandler = async (req: AuthRequest, res) => {
   try {
     const [entries, remittanceRows] = await Promise.all([
       db
-        .select({ user_id: audit_logs.user_id, after_state: audit_logs.after_state, created_at: audit_logs.created_at })
+        .select({ id: audit_logs.id, resource_id: audit_logs.resource_id, after_state: audit_logs.after_state, created_at: audit_logs.created_at })
         .from(audit_logs)
         .where(
           and(
@@ -172,36 +178,50 @@ export const listMyCashDays: RequestHandler = async (req: AuthRequest, res) => {
           ),
         ),
       db
-        .select()
+        .select({ business_date: cash_remittances.business_date })
         .from(cash_remittances)
         .where(and(eq(cash_remittances.remitted_by, userId), gte(cash_remittances.business_date, sinceDate))),
     ]);
 
-    const entriesByDay = new Map<string, CashEntry[]>();
-    for (const entry of entries) {
-      const day = todayInManila(entry.created_at);
-      entriesByDay.set(day, [...(entriesByDay.get(day) ?? []), entry]);
-    }
-    const remittanceByDay = new Map(remittanceRows.map((row) => [row.business_date, row]));
+    const handedOverDays = new Set(remittanceRows.map((row) => row.business_date));
+    const cashPayments = entries
+      .map((entry) => ({ entry, cents: cashPaymentCents(entry.after_state) }))
+      .filter((payment): payment is { entry: (typeof entries)[number]; cents: number } => payment.cents !== null)
+      .filter(({ entry }) => !handedOverDays.has(todayInManila(entry.created_at)));
 
-    const days: MyCashDay[] = [...entriesByDay]
-      .map(([business_date, dayEntries]) => {
-        const total = sumCashByUser(dayEntries).get(userId);
-        const remittance = remittanceByDay.get(business_date);
+    const itemIds = [...new Set(cashPayments.map(({ entry }) => entry.resource_id).filter((id): id is string => Boolean(id)))];
+    const items = itemIds.length
+      ? await db
+          .select({ id: delivery_items.id, invoice_id: delivery_items.invoice_id })
+          .from(delivery_items)
+          .where(inArray(delivery_items.id, itemIds))
+      : [];
+    const invoiceIds = [...new Set(items.map((item) => item.invoice_id))];
+    const invoiceRows = invoiceIds.length
+      ? await db
+          .select({ id: invoices.id, booking_id: invoices.booking_id, customer_name: invoices.customer_name })
+          .from(invoices)
+          .where(inArray(invoices.id, invoiceIds))
+      : [];
+    const invoiceByItem = new Map(items.map((item) => [item.id, invoiceRows.find((invoice) => invoice.id === item.invoice_id)]));
+
+    const payments: MyCashPayment[] = cashPayments
+      .map(({ entry, cents }) => {
+        const invoice = entry.resource_id ? invoiceByItem.get(entry.resource_id) : undefined;
         return {
-          business_date,
-          expected: toPesos(total?.cents ?? 0),
-          payment_count: total?.count ?? 0,
-          handed_over: Boolean(remittance),
-          counted_amount: remittance?.counted_amount ?? null,
+          id: entry.id,
+          business_date: todayInManila(entry.created_at),
+          order_number: invoice?.booking_id.slice(0, 8).toUpperCase() ?? "",
+          customer_name: invoice?.customer_name ?? null,
+          amount: toPesos(cents),
+          created_at: entry.created_at.toISOString(),
         };
       })
-      .filter((day) => day.payment_count > 0)
-      .sort((a, b) => b.business_date.localeCompare(a.business_date));
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
 
-    res.json(days);
+    res.json(payments);
   } catch (error) {
-    console.error("Error listing own cash days:", error);
+    console.error("Error listing own unconfirmed payments:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 };

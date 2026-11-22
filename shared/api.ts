@@ -987,15 +987,15 @@ export interface CashCollectionRow {
   remittance: CashRemittance | null;
 }
 
-/** One business day of cash the caller collected, from GET /api/cash-remittances/mine. */
-export interface MyCashDay {
+/** One cash payment the caller recorded that has not been handed over yet, from GET /api/cash-remittances/mine. */
+export interface MyCashPayment {
+  id: string;
   business_date: string;
-  /** Decimal string: cash the caller recorded on deliveries that day. */
-  expected: string;
-  payment_count: number;
-  handed_over: boolean;
-  /** Decimal string, present once the office has counted and confirmed the hand-over. */
-  counted_amount: string | null;
+  order_number: string;
+  customer_name: string | null;
+  /** Decimal string. */
+  amount: string;
+  created_at: string;
 }
 
 export interface ReportStockRow {

@@ -5,7 +5,7 @@ import { db } from "../db";
 import { audit_logs, cash_remittances, users } from "../db/schema";
 import type { AuthRequest } from "../middleware/auth";
 import { logAction } from "../middleware/audit-logger";
-import { denominationTotalCents, todayInManila, type CashCollectionRow, type CashRemittance, type DenominationCounts } from "../../shared/api";
+import { denominationTotalCents, todayInManila, type CashCollectionRow, type CashRemittance, type DenominationCounts, type MyCashDay } from "../../shared/api";
 
 // End-of-day cash: collectors (drivers, agents) record cash payments on deliveries during the day and
 // hand the cash to the office, which counts it by denomination and confirms here.
@@ -142,6 +142,66 @@ export const listCashCollections: RequestHandler = async (req: AuthRequest, res)
     res.json(rows);
   } catch (error) {
     console.error("Error listing cash collections:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+// ─── GET /api/cash-remittances/mine ───────────────────────────────────────────
+
+const MY_CASH_LOOKBACK_DAYS = 60;
+
+export const listMyCashDays: RequestHandler = async (req: AuthRequest, res) => {
+  if (!req.user) return res.status(401).json({ error: "Authentication required" });
+  if (!process.env.DATABASE_URL) return res.json([]);
+
+  const userId = req.user.userId;
+  const since = new Date(Date.now() - MY_CASH_LOOKBACK_DAYS * DAY_MS);
+  const sinceDate = todayInManila(since);
+
+  try {
+    const [entries, remittanceRows] = await Promise.all([
+      db
+        .select({ user_id: audit_logs.user_id, after_state: audit_logs.after_state, created_at: audit_logs.created_at })
+        .from(audit_logs)
+        .where(
+          and(
+            eq(audit_logs.resource_type, "delivery_item"),
+            eq(audit_logs.user_id, userId),
+            inArray(audit_logs.action, CASH_ACTIONS),
+            gte(audit_logs.created_at, since),
+          ),
+        ),
+      db
+        .select()
+        .from(cash_remittances)
+        .where(and(eq(cash_remittances.remitted_by, userId), gte(cash_remittances.business_date, sinceDate))),
+    ]);
+
+    const entriesByDay = new Map<string, CashEntry[]>();
+    for (const entry of entries) {
+      const day = todayInManila(entry.created_at);
+      entriesByDay.set(day, [...(entriesByDay.get(day) ?? []), entry]);
+    }
+    const remittanceByDay = new Map(remittanceRows.map((row) => [row.business_date, row]));
+
+    const days: MyCashDay[] = [...entriesByDay]
+      .map(([business_date, dayEntries]) => {
+        const total = sumCashByUser(dayEntries).get(userId);
+        const remittance = remittanceByDay.get(business_date);
+        return {
+          business_date,
+          expected: toPesos(total?.cents ?? 0),
+          payment_count: total?.count ?? 0,
+          handed_over: Boolean(remittance),
+          counted_amount: remittance?.counted_amount ?? null,
+        };
+      })
+      .filter((day) => day.payment_count > 0)
+      .sort((a, b) => b.business_date.localeCompare(a.business_date));
+
+    res.json(days);
+  } catch (error) {
+    console.error("Error listing own cash days:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 };

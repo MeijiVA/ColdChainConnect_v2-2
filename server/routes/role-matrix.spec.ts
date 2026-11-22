@@ -157,6 +157,7 @@ const POLICY: Record<string, Policy> = {
   "GET /api/payments/agents": staffOnly("accounting"),
   "GET /api/payments/:id/receipt": staffOnly("accounting"),
   "GET /api/cash-remittances/collections": staffOnly("accounting"),
+  "GET /api/cash-remittances/mine": { agent: true, driver: false, staff: "none", admin: false },
   "POST /api/cash-remittances": staffOnly("accounting"),
   "POST /api/payments/:id/verify": staffOnly("accounting"),
   "GET /api/expenses": staffOnly("accounting"),

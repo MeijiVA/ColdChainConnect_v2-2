@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type {
   AgentScheduleDelivery,
+  MyCashDay,
   AgentScheduleResponse,
   AgentScheduleStop,
 } from "@shared/api";
@@ -23,7 +24,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { optimizeRouteOrder } from "@/lib/routeOrder";
-import { localScheduleDate, statusClasses, unconfirmedPayment } from "@/lib/agentSchedule";
+import { localScheduleDate, statusClasses } from "@/lib/agentSchedule";
 import { DeliveryRouteMap, type MapFocus } from "@/components/DeliveryRouteMap";
 import { AgentStopDetailDialog } from "@/components/AgentStopDetailDialog";
 import { DeliveryPaymentPrompt } from "@/components/shared/DeliveryPaymentPrompt";
@@ -139,6 +140,7 @@ export function AgentDeliverySchedule() {
     stop: AgentScheduleStop;
   } | null>(null);
   const [showUnconfirmed, setShowUnconfirmed] = useState(false);
+  const [myCashDays, setMyCashDays] = useState<MyCashDay[]>([]);
 
   const fetchSchedule = async () => {
     if (!token) return;
@@ -240,14 +242,19 @@ export function AgentDeliverySchedule() {
       );
   }, [view, visibleDeliveries]);
 
-  const unconfirmedStops = deliveries.flatMap((delivery) =>
-    (delivery.delivery_items ?? []).flatMap((stop) => {
-      const payment = unconfirmedPayment(stop);
-      return payment ? [{ delivery, stop, payment }] : [];
-    }),
-  );
-  const unconfirmedTotal = unconfirmedStops.reduce(
-    (total, { payment }) => total + payment.amount,
+  useEffect(() => {
+    if (!token) return;
+    fetch("/api/cash-remittances/mine", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((response) => (response.ok ? response.json() : []))
+      .then((days: MyCashDay[]) => setMyCashDays(days))
+      .catch(() => setMyCashDays([]));
+  }, [token, showUnconfirmed]);
+
+  const unconfirmedDays = myCashDays.filter((day) => !day.handed_over);
+  const unconfirmedTotal = unconfirmedDays.reduce(
+    (total, day) => total + Number(day.expected),
     0,
   );
 
@@ -364,7 +371,7 @@ export function AgentDeliverySchedule() {
               <span className="font-semibold text-foreground">
                 {formatPeso(unconfirmedTotal)}
               </span>
-              · {unconfirmedStops.length} stops
+              · {unconfirmedDays.length} days
               {showUnconfirmed ? (
                 <ChevronUp size={16} />
               ) : (
@@ -373,40 +380,30 @@ export function AgentDeliverySchedule() {
             </span>
           </button>
           {showUnconfirmed &&
-            (unconfirmedStops.length === 0 ? (
+            (unconfirmedDays.length === 0 ? (
               <p className="mt-2 text-xs text-muted-foreground">
-                No unconfirmed payments.
+                No cash waiting to be handed over.
               </p>
             ) : (
               <ul className="divide-y divide-border">
-                {unconfirmedStops.map(({ delivery, stop, payment }) => (
+                {unconfirmedDays.map((day) => (
                   <li
-                    key={stop.id}
+                    key={day.business_date}
                     className="flex items-center justify-between gap-3 py-2"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-foreground">
-                        {stop.destination_customer?.store_name ??
-                          "Unknown customer"}
+                      <p className="text-sm font-semibold text-foreground">
+                        {day.business_date}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {stop.invoice?.booking_id
-                          ? `Order ${stop.invoice.booking_id.slice(0, 8).toUpperCase()}`
-                          : "Order"}
-                        {stop.invoice?.receipt_number
-                          ? ` · Invoice ${stop.invoice.receipt_number}`
-                          : ""}{" "}
-                        · {formatPeso(payment.amount)} · {payment.label}
+                        {day.payment_count}{" "}
+                        {day.payment_count === 1 ? "payment" : "payments"} · Not
+                        yet handed over
                       </p>
                     </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setDetailTarget({ delivery, stop })}
-                    >
-                      View
-                    </Button>
+                    <span className="text-sm font-semibold text-foreground">
+                      {formatPeso(Number(day.expected))}
+                    </span>
                   </li>
                 ))}
               </ul>

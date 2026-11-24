@@ -1074,6 +1074,7 @@ var CreateExpenseSchema = z.object({
 	amount: z.string().regex(/^\d{1,10}(\.\d{1,2})?$/, "Amount must be a positive decimal with up to 2 places").refine((value) => Number(value) > 0, "Amount must be greater than zero")
 });
 z.object({ reject_reason: z.string().min(1, "A reason is required to reject an expense") });
+var MAINTENANCE_EXPENSE_CATEGORY = "Maintenance";
 /** Payment methods that need a clearance remark before Accounting can verify them. */
 var PAYMENT_METHODS_NEEDING_CLEARANCE = ["bank_transfer", "check"];
 function paymentNeedsClearance(method) {
@@ -1474,6 +1475,63 @@ var resetUserMfa = async (req, res) => {
 		});
 	} catch (error) {
 		console.error("MFA reset error:", error);
+		res.status(500).json({ error: "Internal server error" });
+	}
+};
+//#endregion
+//#region server/routes/demo-login.ts
+/**
+* Passwordless sign-in for the public demo deployment.
+*
+* Off unless DEMO_ROLE_PICKER=true is set on that deployment, so the real app (which never sets it)
+* answers 404 here. Only staff and agent accounts can be picked: admin and driver never can.
+* Point a deployment that turns this on at a demo database, never at real customer data.
+*/
+var demoRolePickerEnabled = () => process.env.DEMO_ROLE_PICKER === "true";
+var demoStaffUsername = () => process.env.DEMO_STAFF_USERNAME || "demo-staff";
+var demoAgentUsername = () => process.env.DEMO_AGENT_USERNAME || "agent1";
+async function findAccount(username, role) {
+	return db.query.users.findFirst({ where: and(eq(users.username, username), eq(users.role, role), eq(users.is_archived, false)) });
+}
+/** The demo staff account sees every module. It is created on first use, with a password nobody knows. */
+async function findOrCreateDemoStaff() {
+	const username = demoStaffUsername();
+	const existing = await findAccount(username, "staff");
+	if (existing) return existing;
+	await db.insert(users).values({
+		id: randomUUID(),
+		username,
+		password_hash: await hashPassword(randomUUID()),
+		role: "staff",
+		mfa_required: false,
+		module_permissions: [...modulePermissionKeys]
+	}).onConflictDoNothing();
+	return findAccount(username, "staff");
+}
+var handleDemoLogin = async (req, res) => {
+	if (!demoRolePickerEnabled()) return res.status(404).json({ error: "Not found" });
+	const role = req.body?.role;
+	if (role !== "staff" && role !== "agent") return res.status(400).json({ error: "Choose a staff or agent account" });
+	if (!process.env.DATABASE_URL) return res.status(503).json({ error: "The demo has no database configured." });
+	try {
+		const user = role === "staff" ? await findOrCreateDemoStaff() : await findAccount(demoAgentUsername(), "agent");
+		if (!user) return res.status(503).json({ error: role === "staff" ? `The demo staff account "${demoStaffUsername()}" could not be created.` : `The demo agent account "${demoAgentUsername()}" was not found. Seed the demo database first.` });
+		const token = signToken({
+			userId: user.id,
+			username: user.username,
+			role: user.role
+		});
+		res.json({
+			token,
+			user: {
+				id: user.id,
+				username: user.username,
+				role: user.role,
+				module_permissions: user.module_permissions
+			}
+		});
+	} catch (error) {
+		console.error("Demo login error:", error);
 		res.status(500).json({ error: "Internal server error" });
 	}
 };
@@ -2688,8 +2746,9 @@ function todayIsoDate(now = /* @__PURE__ */ new Date()) {
 //#endregion
 //#region server/routes/driver-schedule.ts
 var getDriverSchedule = async (req, res) => {
+	const unconfirmedOnly = req.query.scope === "unconfirmed";
 	const date = typeof req.query.date === "string" ? req.query.date : todayIsoDate();
-	if (!isIsoDate(date)) return res.status(400).json({ error: "date must be YYYY-MM-DD" });
+	if (!unconfirmedOnly && !isIsoDate(date)) return res.status(400).json({ error: "date must be YYYY-MM-DD" });
 	try {
 		let driverId;
 		if (req.user?.role === "driver") {
@@ -2709,14 +2768,17 @@ var getDriverSchedule = async (req, res) => {
 		});
 		if (!driver) return res.status(404).json({ error: "Driver not found" });
 		const runs = (await db.query.deliveries.findMany({
-			where: eq(deliveries.scheduled_date, date),
+			where: unconfirmedOnly ? isNotNull(deliveries.scheduled_date) : eq(deliveries.scheduled_date, date),
 			with: {
 				truck: true,
-				delivery_items: { with: {
-					destination_customer: true,
-					invoice: { with: { invoice_items: true } },
-					accounts_receivable: { where: eq(accounts_receivable.status, "outstanding") }
-				} }
+				delivery_items: {
+					where: unconfirmedOnly ? ne(delivery_items.status, "completed") : void 0,
+					with: {
+						destination_customer: true,
+						invoice: { with: { invoice_items: true } },
+						accounts_receivable: { where: eq(accounts_receivable.status, "outstanding") }
+					}
+				}
 			}
 		})).filter((run) => (run.driver_id ?? run.truck.driver_id) === driverId).map(({ delivery_items: stops, ...run }) => ({
 			...run,
@@ -2724,9 +2786,9 @@ var getDriverSchedule = async (req, res) => {
 				...stop,
 				outstanding_amount: receivables.reduce((sum, record) => sum + Number(record.amount_due), 0)
 			}))
-		}));
+		})).filter((run) => !unconfirmedOnly || run.delivery_items.length > 0);
 		res.json({
-			date,
+			date: unconfirmedOnly ? null : date,
 			driver,
 			deliveries: runs
 		});
@@ -2838,12 +2900,20 @@ var getAgentSchedule = async (req, res) => {
 			}
 		}) : [];
 		const fullNameByUserId = new Map(saleAgentProfiles.map((p) => [p.user_id, p.full_name?.trim() || null]));
+		const stopIds = assignedDeliveries.flatMap((d) => d.delivery_items.map((s) => s.id));
+		const unverifiedRows = stopIds.length ? await db.select({
+			stopId: receipts.delivery_item_id,
+			amount: receipt_payment_entries.amount
+		}).from(receipt_payment_entries).innerJoin(receipts, eq(receipts.id, receipt_payment_entries.receipt_id)).where(and(inArray(receipts.delivery_item_id, stopIds), isNull(receipt_payment_entries.verified_at))) : [];
+		const unverifiedByStop = /* @__PURE__ */ new Map();
+		for (const row of unverifiedRows) unverifiedByStop.set(row.stopId, (unverifiedByStop.get(row.stopId) ?? 0) + Number(row.amount));
 		const schedule = assignedDeliveries.filter((delivery) => delivery.delivery_items.length > 0).map((delivery) => ({
 			...delivery,
 			driver: delivery.driver ?? delivery.truck?.driver ?? null,
 			delivery_items: delivery.delivery_items.map((stop) => ({
 				...stop,
 				outstanding_amount: stop.accounts_receivable.reduce((sum, record) => sum + Number(record.amount_due), 0),
+				unverified_amount: unverifiedByStop.get(stop.id) ?? 0,
 				invoice: stop.invoice ? {
 					id: stop.invoice.id,
 					booking_id: stop.invoice.booking_id,
@@ -3290,8 +3360,11 @@ async function lockStockForProducts(executor, productIds) {
 	if (productIds.length === 0) return;
 	await executor.select({ id: pallet_items.id }).from(pallet_items).innerJoin(batch_pallets, eq(pallet_items.pallet_id, batch_pallets.id)).innerJoin(inventory_batches, eq(batch_pallets.batch_id, inventory_batches.id)).where(and(eq(inventory_batches.is_archived, false), inArray(pallet_items.product_id, productIds))).orderBy(pallet_items.id).for("update");
 }
-async function getAvailableUnitsBySource(executor, stockItems, excludeBookingId) {
-	if (stockItems.length === 0) return /* @__PURE__ */ new Map();
+async function getSourceAvailability(executor, stockItems, excludeBookingId) {
+	if (stockItems.length === 0) return {
+		availableBySource: /* @__PURE__ */ new Map(),
+		heldBySource: /* @__PURE__ */ new Map()
+	};
 	const sourceIds = stockItems.map((item) => item.id);
 	const productIds = [...new Set(stockItems.map((item) => item.product_id))];
 	const [palletRows, reservedByProduct] = await Promise.all([executor.select({
@@ -3299,9 +3372,16 @@ async function getAvailableUnitsBySource(executor, stockItems, excludeBookingId)
 		quantity: sql`sum(${order_pallet_items.qty_units})::int`
 	}).from(order_pallet_items).innerJoin(order_pallets, eq(order_pallet_items.pallet_id, order_pallets.id)).where(and(ne(order_pallets.status, "shipped"), inArray(order_pallet_items.batch_item_id, sourceIds))).groupBy(order_pallet_items.batch_item_id), getReservedUnitsByProduct(executor, productIds, excludeBookingId)]);
 	const availableBySource = applyReservationsToSourceItems(stockItems, new Map(palletRows.map((row) => [row.sourceItemId, row.quantity])), reservedByProduct);
+	const heldBySource = new Map(stockItems.map((item) => [item.id, Math.max(0, item.qty_units - (availableBySource.get(item.id) ?? 0))]));
 	const today = todayInManila();
 	for (const item of stockItems) if (item.expiration_date && item.expiration_date < today) availableBySource.set(item.id, 0);
-	return availableBySource;
+	return {
+		availableBySource,
+		heldBySource
+	};
+}
+async function getAvailableUnitsBySource(executor, stockItems, excludeBookingId) {
+	return (await getSourceAvailability(executor, stockItems, excludeBookingId)).availableBySource;
 }
 async function getAvailableUnitsBySourceForProducts(executor, productIds, excludeBookingId) {
 	if (productIds.length === 0) return /* @__PURE__ */ new Map();
@@ -4231,6 +4311,25 @@ var PaymentConflict = class extends Error {
 		this.status = status;
 	}
 };
+function newReceiptNumber() {
+	return `OR-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10).replace(/-/g, "")}-${randomUUID().slice(0, 4).toUpperCase()}`;
+}
+async function issueReceipt(tx, values) {
+	const [receipt] = await tx.insert(receipts).values({
+		id: randomUUID(),
+		receipt_number: values.receiptNumber,
+		delivery_item_id: values.itemId,
+		customer_id: values.customerId,
+		truck_id: values.truckId,
+		invoice_id: values.invoiceId,
+		confirmed_by: values.confirmedBy,
+		notes: values.notes,
+		payment_reference: values.paymentReference,
+		cash_collected_amount: values.cashCollectedAmount,
+		confirmed_at: values.confirmedAt
+	}).returning();
+	return receipt;
+}
 var confirmDeliveryItem = async (req, res) => {
 	const { id: deliveryId, itemId } = req.params;
 	const { notes, is_paid, payment_amount, payment_method, payment_reference, payment_id } = req.body ?? {};
@@ -4278,8 +4377,7 @@ var confirmDeliveryItem = async (req, res) => {
 		});
 		if (pallets.length === 0 || pallets.some((pallet) => pallet.status !== "shipped")) return res.status(409).json({ error: "All pallets for this order must be shipped before delivery confirmation" });
 		const now = /* @__PURE__ */ new Date();
-		const receiptNumber = `OR-${now.toISOString().slice(0, 10).replace(/-/g, "")}-${randomUUID().slice(0, 4).toUpperCase()}`;
-		const receiptId = randomUUID();
+		const receiptNumber = collectedCents > 0 ? newReceiptNumber() : null;
 		let newReceipt;
 		try {
 			newReceipt = await db.transaction(async (tx) => {
@@ -4296,28 +4394,30 @@ var confirmDeliveryItem = async (req, res) => {
 					paid_at: isFullyPaid ? now : null,
 					updated_at: now
 				}).where(eq(delivery_items.id, itemId));
-				const [createdReceipt] = await tx.insert(receipts).values({
-					id: receiptId,
-					receipt_number: receiptNumber,
-					delivery_item_id: itemId,
-					customer_id: item.destination_customer_id,
-					truck_id: delivery.truck_id,
-					invoice_id: item.invoice_id,
-					confirmed_by: req.user?.userId ?? null,
-					notes: notes ?? null,
-					payment_reference: collectedCents > 0 ? payment_reference ?? null : null,
-					cash_collected_amount: (collectedCents / 100).toFixed(2),
-					confirmed_at: now
-				}).returning();
-				if (collectedCents > 0) await tx.insert(receipt_payment_entries).values({
-					id: randomUUID(),
-					receipt_id: createdReceipt.id,
-					idempotency_key: payment_id,
-					amount: (collectedCents / 100).toFixed(2),
-					payment_method,
-					payment_reference: payment_reference ?? null,
-					recorded_by: req.user?.userId ?? null
-				});
+				let createdReceipt = null;
+				if (receiptNumber) {
+					createdReceipt = await issueReceipt(tx, {
+						receiptNumber,
+						itemId,
+						customerId: item.destination_customer_id,
+						truckId: delivery.truck_id,
+						invoiceId: item.invoice_id,
+						confirmedBy: req.user?.userId ?? null,
+						confirmedAt: now,
+						cashCollectedAmount: (collectedCents / 100).toFixed(2),
+						paymentReference: payment_reference ?? null,
+						notes: notes ?? null
+					});
+					await tx.insert(receipt_payment_entries).values({
+						id: randomUUID(),
+						receipt_id: createdReceipt.id,
+						idempotency_key: payment_id,
+						amount: (collectedCents / 100).toFixed(2),
+						payment_method,
+						payment_reference: payment_reference ?? null,
+						recorded_by: req.user?.userId ?? null
+					});
+				}
 				if (remainingCents > 0) await tx.insert(accounts_receivable).values({
 					id: randomUUID(),
 					customer_id: item.destination_customer_id,
@@ -4361,7 +4461,11 @@ var confirmDeliveryItem = async (req, res) => {
 			payment_amount: (collectedCents / 100).toFixed(2),
 			payment_method: collectedCents > 0 ? payment_method : null
 		});
-		res.status(201).json(newReceipt);
+		res.status(201).json(newReceipt ?? {
+			delivery_item_id: itemId,
+			invoice_id: item.invoice_id,
+			receipt_number: null
+		});
 	} catch (error) {
 		console.error("Error confirming delivery item:", error);
 		res.status(500).json({ error: "Internal server error" });
@@ -4400,11 +4504,11 @@ var recordDeliveryItemPayment = async (req, res) => {
 		try {
 			result = await db.transaction(async (tx) => {
 				const [lockedItem] = await tx.select({ is_paid: delivery_items.is_paid }).from(delivery_items).where(eq(delivery_items.id, itemId)).for("update");
+				if (!lockedItem) throw new PaymentConflict(404, "Delivery item not found");
 				const [existingReceipt] = await tx.select().from(receipts).where(eq(receipts.delivery_item_id, itemId)).limit(1).for("update");
-				if (!lockedItem || !existingReceipt) throw new PaymentConflict(409, "Receipt not found for this delivery item");
 				const [priorPayment] = await tx.select().from(receipt_payment_entries).where(eq(receipt_payment_entries.idempotency_key, payment_id)).limit(1);
 				if (priorPayment) {
-					if (priorPayment.receipt_id !== existingReceipt.id) throw new PaymentConflict(409, "Payment ID has already been used");
+					if (!existingReceipt || priorPayment.receipt_id !== existingReceipt.id) throw new PaymentConflict(409, "Payment ID has already been used");
 					return {
 						paymentCents: 0,
 						remainingCents: 0,
@@ -4423,8 +4527,21 @@ var recordDeliveryItemPayment = async (req, res) => {
 				const overpaidCents = Math.max(0, paymentCents - outstandingCents);
 				const isFullyPaid = remainingCents === 0;
 				const now = /* @__PURE__ */ new Date();
-				const totalCollectedCents = Math.round(Number(existingReceipt.cash_collected_amount) * 100) + paymentCents;
+				const receipt = existingReceipt ?? await issueReceipt(tx, {
+					receiptNumber: newReceiptNumber(),
+					itemId,
+					customerId: item.destination_customer_id,
+					truckId: delivery.truck_id,
+					invoiceId: item.invoice_id,
+					confirmedBy: req.user?.userId ?? null,
+					confirmedAt: now,
+					cashCollectedAmount: "0.00",
+					paymentReference: null,
+					notes: null
+				});
+				const totalCollectedCents = Math.round(Number(receipt.cash_collected_amount) * 100) + paymentCents;
 				await tx.update(delivery_items).set({
+					receipt_number: receipt.receipt_number,
 					is_paid: isFullyPaid,
 					payment_method,
 					payment_reference: payment_reference ?? null,
@@ -4434,10 +4551,10 @@ var recordDeliveryItemPayment = async (req, res) => {
 				await tx.update(receipts).set({
 					payment_reference: payment_reference ?? null,
 					cash_collected_amount: (totalCollectedCents / 100).toFixed(2)
-				}).where(eq(receipts.delivery_item_id, itemId));
+				}).where(eq(receipts.id, receipt.id));
 				await tx.insert(receipt_payment_entries).values({
 					id: randomUUID(),
-					receipt_id: existingReceipt.id,
+					receipt_id: receipt.id,
 					idempotency_key: payment_id,
 					amount: (paymentCents / 100).toFixed(2),
 					payment_method,
@@ -4458,7 +4575,7 @@ var recordDeliveryItemPayment = async (req, res) => {
 					amount_due: (-overpaidCents / 100).toFixed(2),
 					credit_type: "overpayment",
 					status: "outstanding",
-					notes: `Delivery overpayment on ${existingReceipt.receipt_number}; available for a future order.`
+					notes: `Delivery overpayment on ${receipt.receipt_number}; available for a future order.`
 				});
 				await tx.update(invoices).set({
 					...isFullyPaid ? {
@@ -4859,7 +4976,7 @@ var listInventoryBatches = async (req, res) => {
 				with: { items: { orderBy: (table) => [desc(table.created_at)] } }
 			} }
 		});
-		const availableBySource = await getAvailableUnitsBySource(db, dbBatches.flatMap((batch) => batch.pallets.flatMap((pallet) => pallet.items)), orderId);
+		const { availableBySource, heldBySource } = await getSourceAvailability(db, dbBatches.flatMap((batch) => batch.pallets.flatMap((pallet) => pallet.items)), orderId);
 		const result = dbBatches.map((batch) => ({
 			id: batch.id,
 			name: batch.batch_name,
@@ -4872,6 +4989,7 @@ var listInventoryBatches = async (req, res) => {
 				product_id: item.product_id,
 				qty_units: item.qty_units,
 				available_units: availableBySource.get(item.id) ?? 0,
+				held_units: heldBySource.get(item.id) ?? 0,
 				unit_cost: "0.00",
 				created_at: item.created_at.toISOString(),
 				updated_at: item.updated_at.toISOString()
@@ -6085,7 +6203,11 @@ var getCustomerReport = async (req, res) => {
 };
 //#endregion
 //#region server/middleware/auth.ts
-var DRIVER_ALLOWED_PATHS = new Set(["/api/driver-schedule", "/api/auth/refresh"]);
+var DRIVER_ALLOWED_PATHS = new Set([
+	"/api/driver-schedule",
+	"/api/expenses",
+	"/api/auth/refresh"
+]);
 var DRIVER_STOP_ACTION = /^\/api\/deliveries\/[^/]+\/items\/[^/]+\/(confirm|payment)$/;
 function driverMayReach(req) {
 	const path = `${req.baseUrl}${req.path}`;
@@ -6150,6 +6272,12 @@ var ACTION_RULES = {
 		"agent",
 		"driver"
 	] },
+	"maintenance:request": { roles: [
+		"admin",
+		"agent",
+		"driver"
+	] },
+	"maintenance:decide": { roles: ["admin"] },
 	"pallet:create": {
 		roles: [
 			"admin",
@@ -6256,15 +6384,26 @@ var staffModuleGuard = (req, res, next) => {
 //#endregion
 //#region server/routes/payment-verification.ts
 var MAX_REMARKS_LENGTH = 500;
-var listUnverifiedPayments = async (_req, res) => {
+var PAYMENT_STATUSES = [
+	"ongoing",
+	"accomplished",
+	"all"
+];
+var listUnverifiedPayments = async (req, res) => {
+	const requested = typeof req.query.status === "string" ? req.query.status : "ongoing";
+	if (!PAYMENT_STATUSES.includes(requested)) return res.status(400).json({ error: "status must be ongoing, accomplished or all" });
+	const status = requested;
+	const statusFilter = status === "ongoing" ? isNull(receipt_payment_entries.verified_at) : status === "accomplished" ? isNotNull(receipt_payment_entries.verified_at) : void 0;
 	try {
 		if (!process.env.DATABASE_URL) return res.json([]);
 		const rows = await db.select({
 			payment: receipt_payment_entries,
 			receipt: receipts,
 			customer_name: customers.store_name,
-			invoice_receipt_number: invoices.receipt_number
-		}).from(receipt_payment_entries).innerJoin(receipts, eq(receipts.id, receipt_payment_entries.receipt_id)).innerJoin(customers, eq(customers.id, receipts.customer_id)).innerJoin(invoices, eq(invoices.id, receipts.invoice_id)).where(isNull(receipt_payment_entries.verified_at)).orderBy(asc(receipt_payment_entries.created_at));
+			invoice_receipt_number: invoices.receipt_number,
+			agent_user_id: agents.user_id,
+			agent_name: agents.full_name
+		}).from(receipt_payment_entries).innerJoin(receipts, eq(receipts.id, receipt_payment_entries.receipt_id)).innerJoin(customers, eq(customers.id, receipts.customer_id)).innerJoin(invoices, eq(invoices.id, receipts.invoice_id)).leftJoin(delivery_items, eq(delivery_items.id, receipts.delivery_item_id)).leftJoin(deliveries, eq(deliveries.id, delivery_items.delivery_id)).leftJoin(agents, eq(agents.id, deliveries.agent_id)).where(statusFilter).orderBy(asc(receipt_payment_entries.created_at));
 		const recorderIds = rows.map((row) => row.payment.recorded_by).filter((userId) => Boolean(userId));
 		const recorderDetails = /* @__PURE__ */ new Map();
 		if (recorderIds.length > 0) {
@@ -6293,7 +6432,7 @@ var listUnverifiedPayments = async (_req, res) => {
 				});
 			}
 		}
-		res.json(rows.map(({ payment, receipt, customer_name, invoice_receipt_number }) => {
+		res.json(rows.map(({ payment, receipt, customer_name, invoice_receipt_number, agent_user_id, agent_name }) => {
 			const recorder = payment.recorded_by ? recorderDetails.get(payment.recorded_by) : void 0;
 			return {
 				id: payment.id,
@@ -6303,6 +6442,7 @@ var listUnverifiedPayments = async (_req, res) => {
 				customer_id: receipt.customer_id,
 				invoice_id: receipt.invoice_id,
 				confirmed_at: payment.created_at,
+				verified_at: payment.verified_at?.toISOString() ?? null,
 				customer_name,
 				invoice_receipt_number,
 				payment_method: payment.payment_method,
@@ -6311,7 +6451,9 @@ var listUnverifiedPayments = async (_req, res) => {
 				recorded_by: payment.recorded_by,
 				recorded_by_username: recorder?.username ?? null,
 				recorded_by_name: recorder?.name ?? null,
-				recorded_by_role: recorder?.role ?? null
+				recorded_by_role: recorder?.role ?? null,
+				agent_user_id: agent_user_id ?? null,
+				agent_name: agent_name?.trim() || null
 			};
 		}));
 	} catch (error) {
@@ -6414,20 +6556,25 @@ function businessDayBounds(date) {
 		end: new Date(start.getTime() + DAY_MS)
 	};
 }
+/** The cash amount in centavos recorded by one audit entry, or null when it is not a cash payment. */
+function cashPaymentCents(afterState) {
+	if (!afterState) return null;
+	let state;
+	try {
+		state = JSON.parse(afterState);
+	} catch {
+		return null;
+	}
+	if (state.payment_method !== "cash") return null;
+	const cents = Math.round(Number(state.payment_amount) * 100);
+	return Number.isFinite(cents) && cents > 0 ? cents : null;
+}
 /** Pure: sums the cash payments in audit entries per user, in centavos. */
 function sumCashByUser(entries) {
 	const totals = /* @__PURE__ */ new Map();
 	for (const entry of entries) {
-		if (!entry.after_state) continue;
-		let state;
-		try {
-			state = JSON.parse(entry.after_state);
-		} catch {
-			continue;
-		}
-		if (state.payment_method !== "cash") continue;
-		const cents = Math.round(Number(state.payment_amount) * 100);
-		if (!Number.isFinite(cents) || cents <= 0) continue;
+		const cents = cashPaymentCents(entry.after_state);
+		if (cents === null) continue;
 		const current = totals.get(entry.user_id) ?? {
 			cents: 0,
 			count: 0
@@ -6502,6 +6649,28 @@ var listCashCollections = async (req, res) => {
 		res.status(500).json({ error: "Internal server error" });
 	}
 };
+var listMyUnconfirmedPayments = async (req, res) => {
+	if (!req.user) return res.status(401).json({ error: "Authentication required" });
+	if (!process.env.DATABASE_URL) return res.json([]);
+	try {
+		const payments = (await db.select({
+			payment: receipt_payment_entries,
+			booking_id: invoices.booking_id,
+			customer_name: invoices.customer_name
+		}).from(receipt_payment_entries).innerJoin(receipts, eq(receipts.id, receipt_payment_entries.receipt_id)).innerJoin(invoices, eq(invoices.id, receipts.invoice_id)).where(and(eq(receipt_payment_entries.recorded_by, req.user.userId), eq(receipt_payment_entries.payment_method, "cash"), isNull(receipt_payment_entries.verified_at)))).map(({ payment, booking_id, customer_name }) => ({
+			id: payment.id,
+			business_date: todayInManila(payment.created_at),
+			order_number: booking_id.slice(0, 8).toUpperCase(),
+			customer_name,
+			amount: payment.amount,
+			created_at: payment.created_at.toISOString()
+		})).sort((a, b) => b.created_at.localeCompare(a.created_at));
+		res.json(payments);
+	} catch (error) {
+		console.error("Error listing own unconfirmed payments:", error);
+		res.status(500).json({ error: "Internal server error" });
+	}
+};
 var createCashRemittance = async (req, res) => {
 	if (!req.user) return res.status(401).json({ error: "Authentication required" });
 	if (!process.env.DATABASE_URL) return res.status(503).json({ error: "Database not configured" });
@@ -6565,18 +6734,22 @@ function expenseSummary(row) {
 		reject_reason: row.reject_reason
 	};
 }
+function isMaintenanceOnlyRole(role) {
+	return role === "agent" || role === "driver";
+}
 function nonEmpty(value) {
 	return typeof value === "string" && value.trim() ? value.trim() : null;
 }
-var listExpenses = async (_req, res) => {
+var listExpenses = async (req, res) => {
 	try {
 		if (!process.env.DATABASE_URL) return res.json({ expenses: [] });
+		const maintenanceOnly = isMaintenanceOnlyRole(req.user?.role);
 		const rows = await db.select({
 			expense: expenses,
 			submitted_by_name: submitter.username,
 			approved_by_name: approver.username,
 			paid_by_name: payer.username
-		}).from(expenses).leftJoin(submitter, eq(submitter.id, expenses.submitted_by)).leftJoin(approver, eq(approver.id, expenses.approved_by)).leftJoin(payer, eq(payer.id, expenses.paid_by)).orderBy(desc(expenses.created_at), desc(expenses.id));
+		}).from(expenses).leftJoin(submitter, eq(submitter.id, expenses.submitted_by)).leftJoin(approver, eq(approver.id, expenses.approved_by)).leftJoin(payer, eq(payer.id, expenses.paid_by)).where(maintenanceOnly ? and(eq(expenses.submitted_by, req.user.userId), eq(expenses.category, MAINTENANCE_EXPENSE_CATEGORY)) : void 0).orderBy(desc(expenses.created_at), desc(expenses.id));
 		res.json({ expenses: rows.map((row) => ({
 			...row.expense,
 			submitted_by_name: row.submitted_by_name,
@@ -6596,6 +6769,7 @@ var createExpense = async (req, res) => {
 	const description = nonEmpty(body.description);
 	if (!category) return res.status(400).json({ error: "Category is required" });
 	if (!description) return res.status(400).json({ error: "Description is required" });
+	if (isMaintenanceOnlyRole(req.user.role) && category !== "Maintenance") return res.status(403).json({ error: "You can only submit maintenance expenses" });
 	const rawAmount = typeof body.amount === "number" && Number.isFinite(body.amount) ? String(body.amount) : body.amount;
 	const parsed = CreateExpenseSchema.shape.amount.safeParse(rawAmount);
 	if (!parsed.success) return res.status(400).json({ error: "Amount must be a number greater than zero with at most 2 decimal places" });
@@ -6633,7 +6807,8 @@ function reviewExpense(decision) {
 			const [existing] = await db.select().from(expenses).where(eq(expenses.id, id));
 			if (!existing) return res.status(404).json({ error: "Expense not found" });
 			if (existing.status !== "submitted") return res.status(409).json({ error: `Only a submitted expense can be ${verb}` });
-			if (existing.submitted_by === userId) return res.status(409).json({ error: `You cannot ${decision} an expense you submitted` });
+			const selfReviewAllowed = existing.category === MAINTENANCE_EXPENSE_CATEGORY;
+			if (existing.submitted_by === userId && !selfReviewAllowed) return res.status(409).json({ error: `You cannot ${decision} an expense you submitted` });
 			const now = /* @__PURE__ */ new Date();
 			const updated = await db.update(expenses).set(decision === "approve" ? {
 				status: "approved",
@@ -6646,7 +6821,7 @@ function reviewExpense(decision) {
 				approved_at: now,
 				reject_reason: reason,
 				updated_at: now
-			}).where(and(eq(expenses.id, id), eq(expenses.status, "submitted"), ne(expenses.submitted_by, userId))).returning();
+			}).where(and(eq(expenses.id, id), eq(expenses.status, "submitted"), selfReviewAllowed ? void 0 : ne(expenses.submitted_by, userId))).returning();
 			if (updated.length === 0) return res.status(409).json({ error: `This expense can no longer be ${verb}` });
 			const [expense] = updated;
 			await logAction(userId, decision, "expense", id, expenseSummary(existing), expenseSummary(expense));
@@ -6709,6 +6884,7 @@ function createServer() {
 	app.get("/api/demo", handleDemo);
 	app.post("/api/upload", authMiddleware, requireRole("admin"), uploadMiddleware, handleUpload);
 	app.post("/api/auth/login", handleLogin);
+	app.post("/api/auth/demo-login", handleDemoLogin);
 	app.post("/api/auth/mfa/setup", handleMfaSetup);
 	app.post("/api/auth/mfa/verify", handleMfaVerify);
 	app.post("/api/auth/logout", handleLogout);
@@ -6790,8 +6966,9 @@ function createServer() {
 	app.post("/api/payments/:id/verify", authMiddleware, requirePermission("payment:verify"), verifyReceiptPayment);
 	app.get("/api/cash-remittances/collections", authMiddleware, requirePermission("cash:reconcile"), listCashCollections);
 	app.post("/api/cash-remittances", authMiddleware, requirePermission("cash:reconcile"), createCashRemittance);
-	app.get("/api/expenses", authMiddleware, requireAnyPermission("expense:submit", "expense:approve", "expense:pay"), listExpenses);
-	app.post("/api/expenses", authMiddleware, requirePermission("expense:submit"), createExpense);
+	app.get("/api/cash-remittances/mine", authMiddleware, requireRole("agent"), listMyUnconfirmedPayments);
+	app.get("/api/expenses", authMiddleware, requireAnyPermission("expense:submit", "expense:approve", "expense:pay", "maintenance:request"), listExpenses);
+	app.post("/api/expenses", authMiddleware, requireAnyPermission("expense:submit", "maintenance:request"), createExpense);
 	app.post("/api/expenses/:id/approve", authMiddleware, requirePermission("expense:approve"), approveExpense);
 	app.post("/api/expenses/:id/reject", authMiddleware, requirePermission("expense:approve"), rejectExpense);
 	app.post("/api/expenses/:id/pay", authMiddleware, requirePermission("expense:pay"), payExpense);

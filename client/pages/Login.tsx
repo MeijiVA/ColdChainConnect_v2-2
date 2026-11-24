@@ -204,7 +204,7 @@ export function Login() {
 }
 
 /** A cold chain drawn as a route: a pulse travels storage → customer. Decorative; stills under reduced motion. */
-function ColdRoute() {
+export function ColdRoute() {
   return (
     <svg viewBox="0 0 480 90" className="w-full" fill="none" aria-hidden="true">
       <path id="login-route" d="M12 60 C 90 60, 100 22, 170 22 S 270 68, 330 52 S 420 24, 468 24" stroke="currentColor" strokeOpacity="0.35" strokeWidth="2" strokeLinecap="round" strokeDasharray="2 8" />

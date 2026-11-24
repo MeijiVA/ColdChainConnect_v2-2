@@ -45,6 +45,38 @@ describe("demo login", () => {
   });
 });
 
+describe("demo role picker", () => {
+  const withPicker = async (value: string | undefined, run: () => Promise<void>) => {
+    const saved = process.env.DEMO_ROLE_PICKER;
+    if (value === undefined) delete process.env.DEMO_ROLE_PICKER;
+    else process.env.DEMO_ROLE_PICKER = value;
+    try {
+      await run();
+    } finally {
+      if (saved === undefined) delete process.env.DEMO_ROLE_PICKER;
+      else process.env.DEMO_ROLE_PICKER = saved;
+    }
+  };
+
+  it("does not exist unless the deployment switches it on", async () => {
+    await withPicker(undefined, async () => {
+      const res = await post("/api/auth/demo-login", { role: "agent" });
+      expect(res.status).toBe(404);
+      expect(await res.json()).not.toHaveProperty("token");
+    });
+  });
+
+  it("only ever offers staff and agent accounts", async () => {
+    await withPicker("true", async () => {
+      for (const role of ["admin", "driver", "", undefined]) {
+        const res = await post("/api/auth/demo-login", { role });
+        expect(res.status).toBe(400);
+        expect(await res.json()).not.toHaveProperty("token");
+      }
+    });
+  });
+});
+
 describe("brute-force protection", () => {
   it("blocks a username after repeated wrong passwords", async () => {
     const username = `nobody-${Date.now()}`;

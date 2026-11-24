@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import {
+  DemoLoginRequest,
   LoginRequest,
   LoginResponse,
   MfaChallengeResponse,
@@ -24,6 +25,7 @@ interface AuthStore {
   postLoginStartedAt: number | null;
   error: string | null;
   login: (credentials: LoginRequest) => Promise<MfaChallengeResponse | null>;
+  demoLogin: (role: DemoLoginRequest["role"]) => Promise<AuthUser>;
   setupMfa: (challengeToken: string) => Promise<MfaSetupResponse>;
   verifyMfa: (request: MfaVerifyRequest) => Promise<AuthUser>;
   logout: () => Promise<void>;
@@ -145,6 +147,27 @@ export const useAuth = create<AuthStore>((set, get) => {
         return null;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Login failed";
+        set({ error: message, isLoading: false });
+        throw error;
+      }
+    },
+
+    demoLogin: async (role) => {
+      set({ isLoading: true, error: null });
+
+      try {
+        const response = await fetch("/api/auth/demo-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role } satisfies DemoLoginRequest),
+        });
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, "Could not start the demo"));
+        }
+
+        return completeSignIn(set, get, (await response.json()) as LoginResponse);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not start the demo";
         set({ error: message, isLoading: false });
         throw error;
       }

@@ -12,6 +12,7 @@ import {
   updateUserPassword,
   resetUserMfa,
 } from "./routes/auth";
+import { handleDemoLogin } from "./routes/demo-login";
 import { handleCreateAccount, handleListManagedAccounts, handleUpdateStaffPermissions, handleUpdateMfaRequirement, handleUpdateArchiveStatus } from "./routes/users";
 import {
   listCustomers,
@@ -161,6 +162,7 @@ export function createServer() {
 
   // Auth routes (no auth required)
   app.post("/api/auth/login", handleLogin);
+  app.post("/api/auth/demo-login", handleDemoLogin); // 404 unless DEMO_ROLE_PICKER=true
   app.post("/api/auth/mfa/setup", handleMfaSetup);
   app.post("/api/auth/mfa/verify", handleMfaVerify);
   app.post("/api/auth/logout", handleLogout);

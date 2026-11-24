@@ -14,7 +14,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
 import type { ModulePermission } from "@shared/api";
 import { useAuth } from "./hooks/useAuth";
-import { Login } from "./pages/Login";
+import { DemoRoleSelect } from "./pages/DemoRoleSelect";
 import { Topbar } from "./components/Topbar";
 import { AdminMobileNavigation, AdminNavigation } from "./components/AdminNavigation";
 import { PostLoginLoadingScreen } from "./components/auth/PostLoginLoadingScreen";
@@ -125,7 +125,7 @@ const AppContent = () => {
   if (isAuthenticated && isStaff) {
     return (
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={<DemoRoleSelect />} />
         <Route element={<AppLayout />}>
         <Route path="/" element={<StaffModule permission="dashboard"><Dashboard /></StaffModule>} />
         <Route path="/information-management/*" element={<StaffModule permission="product-customer"><InformationManagement /></StaffModule>} />
@@ -145,7 +145,7 @@ const AppContent = () => {
   if (isAuthenticated && isDriver) {
     return (
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={<DemoRoleSelect />} />
         <Route element={<DriverLayout />}>
           <Route path="/driver-schedule" element={<DriverSchedule />} />
           <Route path="/driver-maintenance" element={<MaintenancePanel />} />
@@ -159,7 +159,7 @@ const AppContent = () => {
   if (isAuthenticated && isAgent) {
     return (
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={<DemoRoleSelect />} />
         <Route element={<AgentLayout agentMode />}>
           <Route path="/booking-dispatch/*" element={<BookingDispatch />} />
           <Route path="/search" element={<SearchResults />} />
@@ -173,8 +173,8 @@ const AppContent = () => {
   // ── Admin: full access ───────────────────────────────────────────
   return (
     <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route element={isAuthenticated ? <AppLayout /> : <Login />}>
+      <Route path="/login" element={<DemoRoleSelect />} />
+      <Route element={isAuthenticated ? <AppLayout /> : <DemoRoleSelect />}>
       <Route path="/" element={<Dashboard />} />
       <Route path="/information-management/*" element={<InformationManagement />} />
       <Route path="/manage-accounts/*" element={<ManageAccounts />} />

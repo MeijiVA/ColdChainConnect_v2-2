@@ -50,6 +50,11 @@ export interface LoginResponse {
   };
 }
 
+/** Demo deployment only: pick which kind of account to explore. Answers with a LoginResponse. */
+export interface DemoLoginRequest {
+  role: "staff" | "agent";
+}
+
 export interface MfaChallengeResponse {
   mfa: "setup" | "verify";
   challenge_token: string;
